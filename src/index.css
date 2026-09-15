@@ -1,0 +1,574 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ============================================================================
+   InsightFlow — sistema visual
+   Cockpit de mercado: fundo quase-preto, cromado sempre escuro (sidebar/topbar),
+   conteúdo com tema claro/escuro alternável. Profundidade real (escala de
+   sombras + brilho no topo dos cards) em vez de bordas chapadas.
+   Acento duplo: azul (ação/foco) + âmbar (destaque/PRO) + violeta (IA).
+   ========================================================================== */
+
+:root {
+  /* ---- tema escuro (padrão) ---- */
+  --bg: #070b14;
+  --bg-glow-1: rgba(58, 160, 255, 0.08);
+  --bg-glow-2: rgba(245, 166, 35, 0.05);
+  --surface: #0f1626;
+  --surface-2: #141d33;
+  --surface-3: #1b2540;
+  --border: #1e293f;
+  --border-strong: #2c3b5e;
+
+  --ink: #eef2f9;
+  --ink-2: #a7b3c9;
+  --ink-3: #7683a0;
+  --ink-4: #4b5670;
+
+  --accent: #3aa0ff;
+  --accent-hover: #5cb3ff;
+  --amber: #f5a623;
+  --amber-strong: #d98c0f;
+  --violet: #b18cff;
+  --up: #22c58a;
+  --down: #fb5468;
+  --warn: #f0b429;
+
+  --tone-green-bg: #0d2b20;
+  --tone-red-bg: #341019;
+  --tone-yellow-bg: #2b2000;
+  --tone-orange-bg: #2c1c05;
+  --tone-orange-fg: #f0a94e;
+  --tone-blue-bg: #0d2038;
+  --tone-violet-bg: #221148;
+
+  --chart-grid: #182238;
+  --chart-axis: #5b6780;
+  --chart-border: #26314c;
+  --chart-crosshair: #3a4a70;
+  --chart-tooltip-bg: #141d33;
+  --chart-tooltip-border: #2c3b5e;
+  --chart-up: #22c58a;
+  --chart-down: #fb5468;
+  --chart-up-fill: #123324;
+  --chart-down-fill: #3a1520;
+  --chart-sma20: #3aa0ff;
+  --chart-sma50: #f5a623;
+  --chart-sma200: #b18cff;
+  --chart-bollinger: #5b6780;
+  --chart-bench-portfolio: #22c58a;
+  --chart-bench-index: #3aa0ff;
+  --chart-bench-cdi: #8391ab;
+  --chart-volume-neutral: #26314c;
+
+  --shadow-1: 0 1px 2px rgb(0 0 0 / 0.4), 0 1px 8px rgb(0 0 0 / 0.28);
+  --shadow-2: 0 2px 8px rgb(0 0 0 / 0.45), 0 10px 28px rgb(0 0 0 / 0.35);
+  --shadow-3: 0 6px 16px rgb(0 0 0 / 0.5), 0 24px 56px rgb(0 0 0 / 0.45);
+  --glow-accent: 0 0 0 1px rgb(58 160 255 / 0.4), 0 0 24px rgb(58 160 255 / 0.16);
+  --highlight-top: inset 0 1px 0 rgb(255 255 255 / 0.04);
+
+  --radius-sm: 0.5rem;
+  --radius: 0.875rem;
+  --radius-lg: 1.25rem;
+  --transition: 160ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+[data-tema='claro'] {
+  --bg: #eef1f6;
+  --bg-glow-1: rgba(58, 160, 255, 0.05);
+  --bg-glow-2: rgba(245, 166, 35, 0.05);
+  --surface: #ffffff;
+  --surface-2: #f5f7fb;
+  --surface-3: #e8ecf5;
+  --border: #dde3ef;
+  --border-strong: #c3ccdf;
+
+  --ink: #141b2e;
+  --ink-2: #48546f;
+  --ink-3: #71809c;
+  --ink-4: #9aa6bd;
+
+  --accent: #1f6fd1;
+  --accent-hover: #175dae;
+  --amber: #b9770e;
+  --amber-strong: #96610a;
+  --violet: #7c5cd6;
+  --up: #0f9d63;
+  --down: #e0324a;
+  --warn: #92610a;
+
+  --tone-green-bg: #e3f7ec;
+  --tone-red-bg: #fde6e9;
+  --tone-yellow-bg: #fdf1d8;
+  --tone-orange-bg: #fdead2;
+  --tone-orange-fg: #92510a;
+  --tone-blue-bg: #e4f0ff;
+  --tone-violet-bg: #efe7ff;
+
+  --chart-grid: #e7ebf3;
+  --chart-axis: #8391ab;
+  --chart-border: #d7deec;
+  --chart-crosshair: #aebbd6;
+  --chart-tooltip-bg: #ffffff;
+  --chart-tooltip-border: #d7deec;
+  --chart-up: #0f9d63;
+  --chart-down: #e0324a;
+  --chart-up-fill: #d9f2e6;
+  --chart-down-fill: #fbdde1;
+  --chart-sma20: #1f6fd1;
+  --chart-sma50: #b9770e;
+  --chart-sma200: #7c5cd6;
+  --chart-bollinger: #aebbd6;
+  --chart-bench-portfolio: #0f9d63;
+  --chart-bench-index: #1f6fd1;
+  --chart-bench-cdi: #7b869e;
+  --chart-volume-neutral: #d7deec;
+
+  --shadow-1: 0 1px 2px rgb(15 23 42 / 0.06), 0 1px 6px rgb(15 23 42 / 0.05);
+  --shadow-2: 0 2px 8px rgb(15 23 42 / 0.07), 0 10px 24px rgb(15 23 42 / 0.08);
+  --shadow-3: 0 6px 16px rgb(15 23 42 / 0.08), 0 24px 48px rgb(15 23 42 / 0.1);
+  --glow-accent: 0 0 0 1px rgb(31 111 209 / 0.3), 0 0 20px rgb(31 111 209 / 0.12);
+  --highlight-top: inset 0 1px 0 rgb(255 255 255 / 0.7);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+html {
+  color-scheme: dark;
+}
+html[data-tema='claro'] {
+  color-scheme: light;
+}
+
+@layer base {
+  body {
+    @apply bg-base text-fg-0 font-sans antialiased;
+    /* trava rolagem horizontal acidental no mobile (gaveta fora da tela, tabelas) */
+    overflow-x: hidden;
+    background-image: radial-gradient(circle at 12% 0%, var(--bg-glow-1), transparent 42%),
+      radial-gradient(circle at 88% 18%, var(--bg-glow-2), transparent 38%);
+    background-attachment: fixed;
+    font-size: 15px;
+    line-height: 1.55;
+  }
+  h1,
+  h2 {
+    font-family: theme('fontFamily.display');
+    letter-spacing: -0.01em;
+  }
+  a {
+    @apply text-accent no-underline;
+  }
+  a:hover {
+    @apply text-accent-hover;
+  }
+  ::selection {
+    background: rgb(58 160 255 / 0.32);
+  }
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-border-main rounded-full;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *:not(.ticker-tape__track),
+    *:not(.ticker-tape__track)::before,
+    *:not(.ticker-tape__track)::after {
+      animation-duration: 0.001ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.001ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+@layer components {
+  .card {
+    @apply flex min-w-0 flex-col rounded-xl border border-border-soft bg-surface;
+    box-shadow: var(--shadow-2), var(--highlight-top);
+    transition: border-color var(--transition), box-shadow var(--transition), transform var(--transition);
+  }
+  .card--interactive:hover {
+    border-color: color-mix(in srgb, var(--accent) 35%, var(--border-strong));
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-3), var(--highlight-top);
+  }
+  .pill {
+    @apply inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium;
+  }
+  .input {
+    @apply w-full rounded-sm border border-border-main bg-elevated px-3 py-2 text-sm text-fg-0
+           placeholder:text-fg-3 transition-colors focus:border-accent focus:outline-none;
+    box-shadow: inset 0 1px 3px rgb(0 0 0 / 0.15);
+  }
+  [data-tema='claro'] .input {
+    box-shadow: inset 0 1px 3px rgb(15 23 42 / 0.06);
+  }
+  .input:focus-visible {
+    box-shadow: inset 0 1px 3px rgb(0 0 0 / 0.15), 0 0 0 3px color-mix(in srgb, var(--accent) 24%, transparent);
+  }
+  .label {
+    @apply mb-1.5 block text-xs font-medium uppercase tracking-wider text-fg-2;
+  }
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-sm px-4 py-2 text-sm font-semibold
+           transition-all disabled:opacity-50 disabled:pointer-events-none;
+  }
+  .btn-primary {
+    @apply btn text-white;
+    background: var(--accent);
+    box-shadow: 0 4px 14px color-mix(in srgb, var(--accent) 35%, transparent), var(--highlight-top);
+  }
+  .btn-primary:hover:not(:disabled) {
+    background: var(--accent-hover);
+    transform: translateY(-1px);
+    box-shadow: 0 6px 18px color-mix(in srgb, var(--accent) 45%, transparent), var(--highlight-top);
+  }
+  .btn-primary:active:not(:disabled) {
+    transform: translateY(0);
+  }
+  .btn-ghost {
+    @apply btn border border-border-main bg-transparent text-fg-1;
+    box-shadow: var(--shadow-1);
+  }
+  .btn-ghost:hover {
+    @apply bg-elevated;
+    border-color: var(--ink-4);
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-2);
+  }
+  .btn-ghost:active,
+  .btn-primary:active {
+    transform: translateY(0) scale(0.98);
+  }
+  .num {
+    @apply tabular-nums;
+    font-feature-settings: 'tnum' 1;
+  }
+}
+
+.fade-in {
+  animation: fadeIn 0.24s ease both;
+}
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ---------------------------------------------------------------- shell */
+.shell-sidebar {
+  background: var(--surface);
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-3);
+}
+.shell-nav-link {
+  color: var(--ink-3);
+  border: 1px solid transparent;
+  transition: color var(--transition), background var(--transition), border-color var(--transition),
+    box-shadow var(--transition), transform var(--transition);
+}
+.shell-nav-link svg {
+  transition: color var(--transition), transform var(--transition);
+}
+.shell-nav-link:hover {
+  color: var(--ink);
+  background: var(--surface-2);
+  transform: translateX(1px);
+}
+.shell-nav-link:hover svg {
+  color: var(--accent);
+  transform: scale(1.08);
+}
+.shell-nav-link.is-active {
+  color: var(--ink);
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--accent) 20%, transparent),
+    color-mix(in srgb, var(--up) 14%, transparent)
+  );
+  border-color: color-mix(in srgb, var(--accent) 32%, transparent);
+  box-shadow: var(--highlight-top), 0 2px 10px color-mix(in srgb, var(--accent) 16%, transparent);
+}
+.shell-nav-link.is-active svg {
+  color: var(--accent);
+}
+.shell-nav-link.is-active:hover {
+  transform: none;
+}
+.shell-nav-link.is-active .shell-nav-bar {
+  transform: translateY(-50%) scaleY(1);
+}
+.shell-nav-bar {
+  position: absolute;
+  left: -1px;
+  top: 50%;
+  width: 3px;
+  height: 20px;
+  transform: translateY(-50%) scaleY(0);
+  border-radius: 999px;
+  background: linear-gradient(180deg, var(--accent), var(--up));
+  box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 60%, transparent);
+  transition: transform var(--transition);
+}
+.shell-topbar {
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border-color: var(--border);
+  box-shadow: var(--shadow-2);
+}
+.shell-drawer-veil {
+  background: rgb(2 4 8 / 0.6);
+  backdrop-filter: blur(2px);
+}
+
+/* Carrossel de cotações — cartões deslizando continuamente, leitura de
+ * mercado ao vivo (pausa no hover, para no prefers-reduced-motion). */
+.ticker-tape {
+  position: relative;
+  overflow: hidden;
+  padding: 0.55rem 0;
+  mask-image: linear-gradient(90deg, transparent, #000 3%, #000 97%, transparent);
+}
+.ticker-tape__track {
+  display: flex;
+  width: max-content;
+  gap: 0.6rem;
+  animation: ticker-scroll 26s linear infinite;
+}
+.ticker-tape:hover .ticker-tape__track {
+  animation-play-state: paused;
+}
+/* RNF-07 — abaixo de md a barra não tem hover pra pausar a animação (touch), então vira
+ * rolagem manual: para a animação, libera overflow-x e some com a metade duplicada da
+ * trilha (só existia pra fechar o loop contínuo do carrossel). */
+@media (max-width: 767px) {
+  .ticker-tape {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    mask-image: none;
+  }
+  .ticker-tape::-webkit-scrollbar {
+    display: none;
+  }
+  .ticker-tape__track {
+    animation: none;
+  }
+  .ticker-tape__item[aria-hidden] {
+    display: none;
+  }
+}
+@keyframes ticker-scroll {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+.ticker-tape__item {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.5rem 0.9rem;
+  font-size: 0.76rem;
+  white-space: nowrap;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  box-shadow: var(--shadow-1);
+  color: var(--ink-3);
+  transition: border-color var(--transition), transform var(--transition);
+}
+.ticker-tape__item:hover {
+  border-color: var(--border-strong);
+  transform: translateY(-1px);
+}
+.ticker-tape__item strong {
+  color: var(--ink);
+  font-weight: 700;
+}
+.ticker-tape__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  flex: none;
+}
+
+/* Ping sutil — sinal recém-ativado (radar). Uso pontual, nunca decorativo. */
+.signal-ping {
+  position: relative;
+  display: inline-flex;
+  height: 8px;
+  width: 8px;
+  border-radius: 999px;
+  background: var(--up);
+}
+.signal-ping::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: inherit;
+  animation: signal-ping 1.8s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .signal-ping::before {
+    animation: none;
+  }
+}
+@keyframes signal-ping {
+  0% {
+    transform: scale(1);
+    opacity: 0.65;
+  }
+  100% {
+    transform: scale(2.4);
+    opacity: 0;
+  }
+}
+
+/* Chip de ícone colorido (KPI / cabeçalho de seção). */
+.icon-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-1);
+}
+
+/* Zebra sutil em tabelas longas — reforça o alinhamento das linhas. */
+.table-zebra tbody tr:nth-child(even) {
+  background: color-mix(in srgb, var(--ink) 3.5%, transparent);
+}
+
+/* ---------------------------------------------------------------- login */
+/* Sombreado do painel esquerdo (mesma técnica do projeto Cerâmica Magali:
+   gradiente diagonal escuro no canto do logo, esmaecendo para um tom da
+   marca no canto oposto) — aqui em azul/verde, cores do InsightFlow. */
+.login-hero-shade {
+  background: linear-gradient(
+    135deg,
+    rgb(2 6 14 / 0.65) 0%,
+    rgb(2 6 14 / 0.15) 42%,
+    color-mix(in srgb, var(--up) 30%, transparent) 100%
+  );
+}
+[data-tema='claro'] .login-hero-shade {
+  background: none;
+}
+.login-card {
+  position: relative;
+  animation: login-card-in 320ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.login-card::before {
+  content: '';
+  position: absolute;
+  left: 18%;
+  right: 18%;
+  top: 0;
+  height: 2px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, var(--accent), var(--up));
+  box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 60%, transparent),
+    0 0 10px color-mix(in srgb, var(--up) 60%, transparent);
+}
+@keyframes login-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.login-logo {
+  animation: login-logo-float 5s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .login-logo {
+    animation: none;
+  }
+}
+@keyframes login-logo-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-4px);
+  }
+}
+.field-icon-wrap {
+  position: relative;
+}
+.field-icon-wrap > svg.field-icon {
+  position: absolute;
+  left: 0.8rem;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 17px;
+  height: 17px;
+  color: var(--ink-3);
+  pointer-events: none;
+  transition: color var(--transition);
+}
+.field-icon-wrap:focus-within > svg.field-icon {
+  color: var(--accent);
+}
+.field-icon-wrap > input {
+  padding-left: 2.5rem;
+}
+.field-icon-wrap > input.has-toggle {
+  padding-right: 2.75rem;
+}
+.field-toggle {
+  position: absolute;
+  right: 0.3rem;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink-3);
+  cursor: pointer;
+  transition: color var(--transition), background var(--transition);
+}
+.field-toggle:hover {
+  color: var(--ink);
+  background: var(--surface-2);
+}
