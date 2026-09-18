@@ -6,13 +6,13 @@
  */
 import { ASSETS, byTicker, generateCandles, toBRL } from './mock/assets.js';
 import { RULES, SIGNALS, BACKTESTS, ruleOf } from './mock/signals.js';
-import { OPERATIONS, EQUITY_CURVE, WATCHLIST } from './mock/portfolio.js';
+import { OPERATIONS, EQUITY_CURVE } from './mock/portfolio.js';
 import { CHAT_FALLBACK, DISCLAIMER } from './mock/ai.js';
 import { USER_RULES, USER_TRIGGERS, metricaOf, operadorOf } from './mock/userAlerts.js';
 import { NEWS } from './mock/news.js';
 import { computeIndicators, lastDefined } from '../lib/indicators.js';
 import { fmtBRL, fmtPct, fmtNum, fmtDate } from '../lib/format.js';
-import { useUiStore } from '../store/index.js';
+import { useAuthStore, useUiStore } from '../store/index.js';
 
 const delay = (ms = 260) => new Promise((r) => setTimeout(r, ms));
 
@@ -30,11 +30,16 @@ function decodeJwtSub(token) {
 }
 
 async function apiFetch(path, options = {}) {
+  const token = useAuthStore.getState().token;
   let res;
   try {
     res = await fetch(`${API_BASE}${path}`, {
       ...options,
-      headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(options.headers || {}),
+      },
     });
   } catch {
     throw new Error('Não foi possível conectar ao servidor. Verifique sua conexão.');
@@ -60,8 +65,9 @@ const delayRead = async () => {
 };
 
 /* ---------- estado mutável da sessão (substituído pelo banco no backend) ---------- */
-let watchlist = [...WATCHLIST];
 let operations = [...OPERATIONS];
+// ticker -> {id, notificar} do último getWatchlist(), pro remove/toggle acharem o ativo_id real.
+let watchlistIndex = new Map();
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 let readAlerts = new Set();
 let userRules = [...USER_RULES];
@@ -333,27 +339,41 @@ export const api = {
 
   /* ----- watchlist (RF-03, RN-08) ----- */
   async getWatchlist() {
-    await delayRead();
-    return watchlist.map((w) => {
-      const asset = byTicker(w.ticker);
-      const sinais = SIGNALS.filter((s) => s.ticker === w.ticker && !s.data_desativacao).length;
-      return { ...w, ...asset, cotacao: quoteOf(w.ticker), sinais };
+    const items = await apiFetch('/watchlist');
+    watchlistIndex = new Map(items.map((it) => [it.ativo.ticker, { id: it.ativo.id, notificar: it.notificar }]));
+    // cotação e contagem de sinais ainda vêm do mock — endpoints de ativos/sinais não foram integrados ainda.
+    return items.map((it) => {
+      const sinais = SIGNALS.filter((s) => s.ticker === it.ativo.ticker && !s.data_desativacao).length;
+      return {
+        ticker: it.ativo.ticker,
+        nome: it.ativo.nome,
+        tipo: it.ativo.tipo,
+        setor: it.ativo.setor,
+        moeda: it.ativo.moeda,
+        notificar: it.notificar,
+        adicionado_em: it.adicionado_em,
+        cotacao: quoteOf(it.ativo.ticker),
+        sinais,
+      };
     });
   },
   async addToWatchlist(ticker) {
-    await delay(300);
-    if (!watchlist.some((w) => w.ticker === ticker))
-      watchlist = [...watchlist, { ticker, notificar: true, adicionado_em: new Date().toISOString().slice(0, 10) }];
+    await apiFetch('/watchlist', { method: 'POST', body: JSON.stringify({ ticker }) });
     return { ok: true };
   },
   async removeFromWatchlist(ticker) {
-    await delay(260);
-    watchlist = watchlist.filter((w) => w.ticker !== ticker);
+    const entry = watchlistIndex.get(ticker);
+    await apiFetch(`/watchlist/${entry.id}`, { method: 'DELETE' });
+    watchlistIndex.delete(ticker);
     return { ok: true };
   },
   async toggleNotify(ticker) {
-    await delay(180);
-    watchlist = watchlist.map((w) => (w.ticker === ticker ? { ...w, notificar: !w.notificar } : w));
+    const entry = watchlistIndex.get(ticker);
+    const data = await apiFetch(`/watchlist/${entry.id}/notificacao`, {
+      method: 'PATCH',
+      body: JSON.stringify({ notificar: !entry.notificar }),
+    });
+    entry.notificar = data.notificar;
     return { ok: true };
   },
 
