@@ -73,6 +73,19 @@ let operations = [...OPERATIONS];
 // para os demais (ex: resultado de busca ainda não adicionado), cai no mock mesmo.
 let watchlistIndex = new Map();
 
+/** Garante que watchlistIndex está populado antes de checar um ticker — quem entra direto numa
+ * página de ativo (sem passar pelo Dashboard antes) pode chegar aqui com o índice ainda vazio,
+ * já que ele só é preenchido como efeito colateral de getWatchlist(). */
+async function resolverAtivoCache(ticker) {
+  if (watchlistIndex.has(ticker)) return watchlistIndex.get(ticker);
+  try {
+    await api.getWatchlist();
+  } catch {
+    return undefined;
+  }
+  return watchlistIndex.get(ticker);
+}
+
 const PERIODO_BACKEND = { '1d': '1D', '1s': '1S', '1m': '1M', '3m': '3M', '1a': '1A', '5a': '5A' };
 const PERIODO_TAMANHO = { '1d': 2, '1s': 6, '1m': 24, '3m': 68, '1a': 254, '5a': Infinity };
 
@@ -84,6 +97,15 @@ const mapCotacao = (ticker, cot) => ({
   volume: Number(cot.volume),
   data_hora: new Date().toISOString(),
 });
+
+// a API real não devolve uma cor por regra (isso é só estética do mock) — deriva uma tom
+// consistente a partir do nome da regra, pra pelo menos não repetir a mesma cor sempre.
+const TONS_SINAL = ['blue', 'orange', 'green', 'purple', 'yellow'];
+function tonePorNome(nome) {
+  let hash = 0;
+  for (let i = 0; i < (nome || '').length; i++) hash = (hash * 31 + nome.charCodeAt(i)) | 0;
+  return TONS_SINAL[Math.abs(hash) % TONS_SINAL.length];
+}
 
 /** Busca o histórico real (sempre em 5A, pra dar lookback suficiente pro SMA200 etc.) e
  * calcula os indicadores localmente com `computeIndicators` — a API tem um endpoint de
@@ -272,7 +294,7 @@ export const api = {
     return apiFetch(`/ativos/buscar?termo=${encodeURIComponent(t)}`);
   },
   async getAsset(ticker) {
-    const cached = watchlistIndex.get(ticker);
+    const cached = await resolverAtivoCache(ticker);
     if (!cached) {
       await delayRead();
       const asset = byTicker(ticker);
@@ -294,7 +316,7 @@ export const api = {
     return tickers.map(quoteOf);
   },
   async getHistory(ticker, periodo = '1a') {
-    const cached = watchlistIndex.get(ticker);
+    const cached = await resolverAtivoCache(ticker);
     if (!cached) {
       await delayRead();
       const { candles, ind } = seriesOf(ticker);
@@ -333,7 +355,7 @@ export const api = {
     };
   },
   async getIndicatorSnapshot(ticker) {
-    const cached = watchlistIndex.get(ticker);
+    const cached = await resolverAtivoCache(ticker);
     if (!cached) {
       await delayRead();
       const { ind } = seriesOf(ticker);
@@ -365,12 +387,49 @@ export const api = {
 
   /* ----- sinais (RF-07, RF-08) ----- */
   async getSignals({ ticker, apenasAtivos = true } = {}) {
-    await delayRead();
-    return SIGNALS.filter((s) => (!ticker || s.ticker === ticker) && (!apenasAtivos || !s.data_desativacao)).map((s) => ({
-      ...s,
-      regra: ruleOf(s.regra_id),
-      backtest: BACKTESTS[s.regra_id],
-    }));
+    // só dá pra buscar sinal real de um ativo por vez (GET /ativos/{id}/sinais) — sem um
+    // ticker resolvível na watchlist, ou sem ticker nenhum (visão geral do Dashboard, que
+    // cruza vários ativos), continua no mock.
+    const cached = ticker ? await resolverAtivoCache(ticker) : null;
+    if (!ticker || !cached) {
+      await delayRead();
+      return SIGNALS.filter((s) => (!ticker || s.ticker === ticker) && (!apenasAtivos || !s.data_desativacao)).map((s) => ({
+        ...s,
+        regra: ruleOf(s.regra_id),
+        backtest: BACKTESTS[s.regra_id],
+      }));
+    }
+    const sinais = await apiFetch(`/ativos/${cached.id}/sinais`);
+    const filtrados = sinais.filter((s) => !apenasAtivos || !s.data_desativacao);
+    return Promise.all(
+      filtrados.map(async (s) => {
+        const bt = await apiFetch(`/ativos/${cached.id}/sinais/${s.regra_id}/backtest`).catch(() => null);
+        return {
+          id: s.id,
+          ticker,
+          regra_id: s.regra_id,
+          data_ativacao: s.data_ativacao,
+          data_desativacao: s.data_desativacao,
+          // a API real só devolve um valor de contexto ("valor", stringificado), não o
+          // conjunto rico por indicador que o mock tem — cai num único campo.
+          contexto: { valor: Number(s.contexto?.valor) },
+          regra: {
+            nome: s.regra_nome,
+            descricao: s.regra_descricao,
+            peso: 0, // não exposto pela API real (existe um cálculo no backend, mas sem rota pública)
+            tom: tonePorNome(s.regra_nome),
+          },
+          backtest: bt
+            ? {
+                ocorrencias: bt.total_ocorrencias,
+                ret5: bt.retorno_medio_5_pregoes != null ? Number(bt.retorno_medio_5_pregoes) : null,
+                ret20: bt.retorno_medio_20_pregoes != null ? Number(bt.retorno_medio_20_pregoes) : null,
+                ret60: bt.retorno_medio_60_pregoes != null ? Number(bt.retorno_medio_60_pregoes) : null,
+              }
+            : { ocorrencias: 0, ret5: null, ret20: null, ret60: null },
+        };
+      }),
+    );
   },
   async getRules() {
     await delay(140);
