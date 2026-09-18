@@ -10,12 +10,43 @@ import { OPERATIONS, EQUITY_CURVE, WATCHLIST } from './mock/portfolio.js';
 import { CHAT_FALLBACK, DISCLAIMER } from './mock/ai.js';
 import { USER_RULES, USER_TRIGGERS, metricaOf, operadorOf } from './mock/userAlerts.js';
 import { NEWS } from './mock/news.js';
-import { USERS } from './mock/users.js';
 import { computeIndicators, lastDefined } from '../lib/indicators.js';
 import { fmtBRL, fmtPct, fmtNum, fmtDate } from '../lib/format.js';
 import { useUiStore } from '../store/index.js';
 
 const delay = (ms = 260) => new Promise((r) => setTimeout(r, ms));
+
+/* ---------- integração real com a API (RF-01, RF-02) ---------- */
+const API_BASE = '/api/v1';
+
+/** Extrai o `sub` (id do usuário) do payload de um JWT, sem validar assinatura
+ * — a validação de verdade é feita pelo backend a cada requisição autenticada. */
+function decodeJwtSub(token) {
+  try {
+    return JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))).sub;
+  } catch {
+    return null;
+  }
+}
+
+async function apiFetch(path, options = {}) {
+  let res;
+  try {
+    res = await fetch(`${API_BASE}${path}`, {
+      ...options,
+      headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+    });
+  } catch {
+    throw new Error('Não foi possível conectar ao servidor. Verifique sua conexão.');
+  }
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    const err = new Error(body?.detail || 'Erro inesperado. Tente novamente.');
+    err.status = res.status;
+    throw err;
+  }
+  return res.status === 204 ? null : res.json();
+}
 
 /** RNF-10 — ponto único de latência simulada (300–800 ms) e do alternador "Forçar erro"
  * (Configurações → Modo desenvolvedor). Usado só pelos métodos de leitura (os que alimentam
@@ -31,7 +62,6 @@ const delayRead = async () => {
 /* ---------- estado mutável da sessão (substituído pelo banco no backend) ---------- */
 let watchlist = [...WATCHLIST];
 let operations = [...OPERATIONS];
-let users = [...USERS];
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 let readAlerts = new Set();
 let userRules = [...USER_RULES];
@@ -139,28 +169,22 @@ const seriesOf = (ticker) => {
 
 export const api = {
   /* ----- autenticação (RF-01, RF-02) ----- */
-  async login({ email }) {
-    await delay(520);
-    if (!email?.includes('@')) throw new Error('Informe um e-mail válido.');
+  async login({ email, senha }) {
+    const data = await apiFetch('/auth/login', { method: 'POST', body: JSON.stringify({ email, senha }) });
     return {
-      token: 'mock.jwt.token',
-      usuario: { id: 'u1', nome: email.split('@')[0].replace(/^./, (c) => c.toUpperCase()), email },
+      token: data.access_token,
+      // o backend não devolve o nome no login — deriva do e-mail, como a UI já espera.
+      usuario: { id: decodeJwtSub(data.access_token), nome: email.split('@')[0].replace(/^./, (c) => c.toUpperCase()), email },
     };
   },
   async register({ nome, email, senha }) {
-    await delay(620);
-    if (!nome?.trim()) throw new Error('Informe seu nome.');
-    const emailNorm = (email || '').trim().toLowerCase();
-    if (!EMAIL_RE.test(emailNorm)) throw new Error('Informe um e-mail válido.');
-    if (!senha || senha.length < 8) throw new Error('A senha precisa ter ao menos 8 caracteres.');
-    if (users.some((u) => u.email.toLowerCase() === emailNorm)) {
-      const err = new Error('Este e-mail já está cadastrado.');
-      err.code = 'EMAIL_EXISTS';
+    try {
+      const data = await apiFetch('/usuarios', { method: 'POST', body: JSON.stringify({ nome, email, senha }) });
+      return { token: data.access_token, usuario: { id: decodeJwtSub(data.access_token), nome, email } };
+    } catch (err) {
+      if (err.status === 409) err.code = 'EMAIL_EXISTS';
       throw err;
     }
-    const novo = { id: `u${Date.now()}`, nome: nome.trim(), email: emailNorm, criado_em: new Date().toISOString().slice(0, 10) };
-    users = [...users, novo];
-    return { token: 'mock.jwt.token', usuario: { id: novo.id, nome: novo.nome, email: novo.email } };
   },
   async recoverPassword({ email }) {
     await delay(520);
