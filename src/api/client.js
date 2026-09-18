@@ -6,13 +6,13 @@
  */
 import { ASSETS, byTicker, generateCandles, toBRL } from './mock/assets.js';
 import { RULES, SIGNALS, BACKTESTS, ruleOf } from './mock/signals.js';
-import { OPERATIONS, EQUITY_CURVE, WATCHLIST } from './mock/portfolio.js';
+import { OPERATIONS, EQUITY_CURVE } from './mock/portfolio.js';
 import { CHAT_FALLBACK, DISCLAIMER } from './mock/ai.js';
 import { USER_RULES, USER_TRIGGERS, metricaOf, operadorOf } from './mock/userAlerts.js';
 import { NEWS } from './mock/news.js';
 import { computeIndicators, lastDefined } from '../lib/indicators.js';
 import { fmtBRL, fmtPct, fmtNum, fmtDate } from '../lib/format.js';
-import { useUiStore } from '../store/index.js';
+import { useAuthStore, useUiStore } from '../store/index.js';
 
 const delay = (ms = 260) => new Promise((r) => setTimeout(r, ms));
 
@@ -30,11 +30,16 @@ function decodeJwtSub(token) {
 }
 
 async function apiFetch(path, options = {}) {
+  const token = useAuthStore.getState().token;
   let res;
   try {
     res = await fetch(`${API_BASE}${path}`, {
       ...options,
-      headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(options.headers || {}),
+      },
     });
   } catch {
     throw new Error('Não foi possível conectar ao servidor. Verifique sua conexão.');
@@ -60,8 +65,67 @@ const delayRead = async () => {
 };
 
 /* ---------- estado mutável da sessão (substituído pelo banco no backend) ---------- */
-let watchlist = [...WATCHLIST];
 let operations = [...OPERATIONS];
+// ticker -> {id, notificar, nome, tipo, setor, moeda} do último getWatchlist().
+// É também o único jeito que temos de resolver o UUID real de um ativo no backend: a API
+// não expõe um endpoint pra buscar/criar um ativo por ticker fora do fluxo de watchlist, então
+// cotação/histórico/indicadores só usam dados reais para ativos que já estão na watchlist —
+// para os demais (ex: resultado de busca ainda não adicionado), cai no mock mesmo.
+let watchlistIndex = new Map();
+
+/** Garante que watchlistIndex está populado antes de checar um ticker — quem entra direto numa
+ * página de ativo (sem passar pelo Dashboard antes) pode chegar aqui com o índice ainda vazio,
+ * já que ele só é preenchido como efeito colateral de getWatchlist(). */
+async function resolverAtivoCache(ticker) {
+  if (watchlistIndex.has(ticker)) return watchlistIndex.get(ticker);
+  try {
+    await api.getWatchlist();
+  } catch {
+    return undefined;
+  }
+  return watchlistIndex.get(ticker);
+}
+
+const PERIODO_BACKEND = { '1d': '1D', '1s': '1S', '1m': '1M', '3m': '3M', '1a': '1A', '5a': '5A' };
+const PERIODO_TAMANHO = { '1d': 2, '1s': 6, '1m': 24, '3m': 68, '1a': 254, '5a': Infinity };
+
+const mapCotacao = (ticker, cot) => ({
+  ticker,
+  preco: Number(cot.preco),
+  variacao: Number(cot.variacao),
+  variacao_pct: Number(cot.variacao_percentual),
+  volume: Number(cot.volume),
+  data_hora: new Date().toISOString(),
+});
+
+// a API real não devolve uma cor por regra (isso é só estética do mock) — deriva uma tom
+// consistente a partir do nome da regra, pra pelo menos não repetir a mesma cor sempre.
+const TONS_SINAL = ['blue', 'orange', 'green', 'purple', 'yellow'];
+function tonePorNome(nome) {
+  let hash = 0;
+  for (let i = 0; i < (nome || '').length; i++) hash = (hash * 31 + nome.charCodeAt(i)) | 0;
+  return TONS_SINAL[Math.abs(hash) % TONS_SINAL.length];
+}
+
+/** Busca o histórico real (sempre em 5A, pra dar lookback suficiente pro SMA200 etc.) e
+ * calcula os indicadores localmente com `computeIndicators` — a API tem um endpoint de
+ * indicadores, mas ele devolve só o valor atual de cada um, não a série por candle que os
+ * gráficos precisam, então reaproveitar o cálculo local é mais simples e fica consistente. */
+async function fetchRealCandlesEIndicadores(ativoId) {
+  const pontos = await apiFetch(`/ativos/${ativoId}/historico?periodo=5A`);
+  const candles = pontos
+    .map((p) => ({
+      time: p.data.slice(0, 10),
+      open: Number(p.abertura),
+      high: Number(p.maxima),
+      low: Number(p.minima),
+      close: Number(p.fechamento),
+      volume: Number(p.volume),
+    }))
+    // a API devolve do mais recente pro mais antigo; o gráfico (lightweight-charts) exige ordem crescente.
+    .sort((a, b) => a.time.localeCompare(b.time));
+  return { candles, ind: computeIndicators(candles) };
+}
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 let readAlerts = new Set();
 let userRules = [...USER_RULES];
@@ -221,26 +285,60 @@ export const api = {
 
   /* ----- ativos (RF-04, RF-05, RF-06) ----- */
   async searchAssets(termo) {
-    await delayRead();
-    const t = (termo || '').trim().toLowerCase();
-    if (!t) return ASSETS;
-    return ASSETS.filter((a) => a.ticker.toLowerCase().includes(t) || a.nome.toLowerCase().includes(t));
+    const t = (termo || '').trim();
+    // a API não tem um endpoint de "listar todos" — sem termo, não tem o que buscar de verdade.
+    if (!t) return [];
+    // a busca real não devolve preço (só a cotação por ativo_id tem isso, e resultado de busca
+    // ainda não tem um ativo_id — só ganha um ao ser adicionado à watchlist). SearchPage.jsx
+    // mostra 0,00 na coluna de preço pra esses itens até lá.
+    return apiFetch(`/ativos/buscar?termo=${encodeURIComponent(t)}`);
   },
   async getAsset(ticker) {
-    await delayRead();
-    const asset = byTicker(ticker);
-    if (!asset) throw new Error('Ativo não encontrado.');
-    return { ...asset, cotacao: quoteOf(asset.ticker) };
+    const cached = await resolverAtivoCache(ticker);
+    if (!cached) {
+      await delayRead();
+      const asset = byTicker(ticker);
+      if (!asset) throw new Error('Ativo não encontrado.');
+      return { ...asset, cotacao: quoteOf(asset.ticker) };
+    }
+    const cot = await apiFetch(`/ativos/${cached.id}/cotacao`);
+    return {
+      ticker,
+      nome: cached.nome,
+      tipo: cached.tipo,
+      setor: cached.setor,
+      moeda: cached.moeda,
+      cotacao: mapCotacao(ticker, cot),
+    };
   },
   async getQuotes(tickers) {
     await delay(240);
     return tickers.map(quoteOf);
   },
   async getHistory(ticker, periodo = '1a') {
-    await delayRead();
-    const { candles, ind } = seriesOf(ticker);
-    const sizes = { '1d': 2, '1s': 6, '1m': 24, '3m': 68, '1a': 254, '5a': candles.length };
-    const n = Math.min(sizes[periodo] ?? 254, candles.length);
+    const cached = await resolverAtivoCache(ticker);
+    if (!cached) {
+      await delayRead();
+      const { candles, ind } = seriesOf(ticker);
+      const sizes = { '1d': 2, '1s': 6, '1m': 24, '3m': 68, '1a': 254, '5a': candles.length };
+      const n = Math.min(sizes[periodo] ?? 254, candles.length);
+      const from = candles.length - n;
+      const slice = (arr) => arr.slice(from);
+      return {
+        candles: candles.slice(from),
+        indicators: {
+          sma20: slice(ind.sma20),
+          sma50: slice(ind.sma50),
+          sma200: slice(ind.sma200),
+          rsi14: slice(ind.rsi14),
+          macd: { line: slice(ind.macd.line), signal: slice(ind.macd.signal), hist: slice(ind.macd.hist) },
+          bollinger: { mid: slice(ind.bollinger.mid), upper: slice(ind.bollinger.upper), lower: slice(ind.bollinger.lower) },
+          volRel: slice(ind.volRel),
+        },
+      };
+    }
+    const { candles, ind } = await fetchRealCandlesEIndicadores(cached.id);
+    const n = Math.min(PERIODO_TAMANHO[periodo] ?? 254, candles.length);
     const from = candles.length - n;
     const slice = (arr) => arr.slice(from);
     return {
@@ -257,8 +355,23 @@ export const api = {
     };
   },
   async getIndicatorSnapshot(ticker) {
-    await delayRead();
-    const { ind } = seriesOf(ticker);
+    const cached = await resolverAtivoCache(ticker);
+    if (!cached) {
+      await delayRead();
+      const { ind } = seriesOf(ticker);
+      return {
+        'SMA (20)': lastDefined(ind.sma20),
+        'SMA (50)': lastDefined(ind.sma50),
+        'SMA (200)': lastDefined(ind.sma200),
+        'RSI (14)': lastDefined(ind.rsi14),
+        'MACD (12,26,9)': lastDefined(ind.macd.line),
+        'Sinal MACD': lastDefined(ind.macd.signal),
+        'Bollinger sup.': lastDefined(ind.bollinger.upper),
+        'Bollinger inf.': lastDefined(ind.bollinger.lower),
+        'Volume relativo': lastDefined(ind.volRel),
+      };
+    }
+    const { ind } = await fetchRealCandlesEIndicadores(cached.id);
     return {
       'SMA (20)': lastDefined(ind.sma20),
       'SMA (50)': lastDefined(ind.sma50),
@@ -274,12 +387,49 @@ export const api = {
 
   /* ----- sinais (RF-07, RF-08) ----- */
   async getSignals({ ticker, apenasAtivos = true } = {}) {
-    await delayRead();
-    return SIGNALS.filter((s) => (!ticker || s.ticker === ticker) && (!apenasAtivos || !s.data_desativacao)).map((s) => ({
-      ...s,
-      regra: ruleOf(s.regra_id),
-      backtest: BACKTESTS[s.regra_id],
-    }));
+    // só dá pra buscar sinal real de um ativo por vez (GET /ativos/{id}/sinais) — sem um
+    // ticker resolvível na watchlist, ou sem ticker nenhum (visão geral do Dashboard, que
+    // cruza vários ativos), continua no mock.
+    const cached = ticker ? await resolverAtivoCache(ticker) : null;
+    if (!ticker || !cached) {
+      await delayRead();
+      return SIGNALS.filter((s) => (!ticker || s.ticker === ticker) && (!apenasAtivos || !s.data_desativacao)).map((s) => ({
+        ...s,
+        regra: ruleOf(s.regra_id),
+        backtest: BACKTESTS[s.regra_id],
+      }));
+    }
+    const sinais = await apiFetch(`/ativos/${cached.id}/sinais`);
+    const filtrados = sinais.filter((s) => !apenasAtivos || !s.data_desativacao);
+    return Promise.all(
+      filtrados.map(async (s) => {
+        const bt = await apiFetch(`/ativos/${cached.id}/sinais/${s.regra_id}/backtest`).catch(() => null);
+        return {
+          id: s.id,
+          ticker,
+          regra_id: s.regra_id,
+          data_ativacao: s.data_ativacao,
+          data_desativacao: s.data_desativacao,
+          // a API real só devolve um valor de contexto ("valor", stringificado), não o
+          // conjunto rico por indicador que o mock tem — cai num único campo.
+          contexto: { valor: Number(s.contexto?.valor) },
+          regra: {
+            nome: s.regra_nome,
+            descricao: s.regra_descricao,
+            peso: 0, // não exposto pela API real (existe um cálculo no backend, mas sem rota pública)
+            tom: tonePorNome(s.regra_nome),
+          },
+          backtest: bt
+            ? {
+                ocorrencias: bt.total_ocorrencias,
+                ret5: bt.retorno_medio_5_pregoes != null ? Number(bt.retorno_medio_5_pregoes) : null,
+                ret20: bt.retorno_medio_20_pregoes != null ? Number(bt.retorno_medio_20_pregoes) : null,
+                ret60: bt.retorno_medio_60_pregoes != null ? Number(bt.retorno_medio_60_pregoes) : null,
+              }
+            : { ocorrencias: 0, ret5: null, ret20: null, ret60: null },
+        };
+      }),
+    );
   },
   async getRules() {
     await delay(140);
@@ -333,27 +483,52 @@ export const api = {
 
   /* ----- watchlist (RF-03, RN-08) ----- */
   async getWatchlist() {
-    await delayRead();
-    return watchlist.map((w) => {
-      const asset = byTicker(w.ticker);
-      const sinais = SIGNALS.filter((s) => s.ticker === w.ticker && !s.data_desativacao).length;
-      return { ...w, ...asset, cotacao: quoteOf(w.ticker), sinais };
-    });
+    const items = await apiFetch('/watchlist');
+    watchlistIndex = new Map(
+      items.map((it) => [
+        it.ativo.ticker,
+        { id: it.ativo.id, notificar: it.notificar, nome: it.ativo.nome, tipo: it.ativo.tipo, setor: it.ativo.setor, moeda: it.ativo.moeda },
+      ]),
+    );
+    // contagem de sinais ainda vem do mock — endpoint de sinais não foi integrado ainda.
+    return Promise.all(
+      items.map(async (it) => {
+        const sinais = SIGNALS.filter((s) => s.ticker === it.ativo.ticker && !s.data_desativacao).length;
+        // se a cotação real falhar (ex: BrAPI fora do ar, 503), cai pro mock em vez de quebrar a lista inteira.
+        const cotacao = await apiFetch(`/ativos/${it.ativo.id}/cotacao`)
+          .then((cot) => mapCotacao(it.ativo.ticker, cot))
+          .catch(() => quoteOf(it.ativo.ticker));
+        return {
+          ticker: it.ativo.ticker,
+          nome: it.ativo.nome,
+          tipo: it.ativo.tipo,
+          setor: it.ativo.setor,
+          moeda: it.ativo.moeda,
+          notificar: it.notificar,
+          adicionado_em: it.adicionado_em,
+          cotacao,
+          sinais,
+        };
+      }),
+    );
   },
   async addToWatchlist(ticker) {
-    await delay(300);
-    if (!watchlist.some((w) => w.ticker === ticker))
-      watchlist = [...watchlist, { ticker, notificar: true, adicionado_em: new Date().toISOString().slice(0, 10) }];
+    await apiFetch('/watchlist', { method: 'POST', body: JSON.stringify({ ticker }) });
     return { ok: true };
   },
   async removeFromWatchlist(ticker) {
-    await delay(260);
-    watchlist = watchlist.filter((w) => w.ticker !== ticker);
+    const entry = watchlistIndex.get(ticker);
+    await apiFetch(`/watchlist/${entry.id}`, { method: 'DELETE' });
+    watchlistIndex.delete(ticker);
     return { ok: true };
   },
   async toggleNotify(ticker) {
-    await delay(180);
-    watchlist = watchlist.map((w) => (w.ticker === ticker ? { ...w, notificar: !w.notificar } : w));
+    const entry = watchlistIndex.get(ticker);
+    const data = await apiFetch(`/watchlist/${entry.id}/notificacao`, {
+      method: 'PATCH',
+      body: JSON.stringify({ notificar: !entry.notificar }),
+    });
+    entry.notificar = data.notificar;
     return { ok: true };
   },
 
