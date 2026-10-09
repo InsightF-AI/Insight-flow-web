@@ -1,45 +1,96 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { api } from '../api/client.js';
-import { useAuthStore } from '../store/index.js';
+import { mapNotificacao, renovarTokens } from '../api/client.js';
+import { useAuthStore, useUiStore } from '../store/index.js';
 import { useToastStore } from '../store/toastStore.js';
 import { notificarDisparo } from '../lib/notify.js';
+import { ativarWebPush, webPushSuportado } from '../lib/webPush.js';
 
-/** RN-06 — intervalos oficiais da especificação. Em desenvolvimento, intervalos curtos
- * tornam o agendador observável numa sessão de demonstração sem esperar 5–15 minutos. */
-const INTERVALO_MS = {
-  RENDA_VARIAVEL: import.meta.env.DEV ? 45_000 : 15 * 60_000,
-  CRIPTO: import.meta.env.DEV ? 20_000 : 5 * 60_000,
-};
+const WS_URL = `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/api/v1/notificacoes/ws`;
+const RECONEXAO_MAX_MS = 15_000;
 
-/** RF-18/UC-07 — agendador em memória: reavalia as regras do usuário periodicamente
- * (renda variável e cripto em cadências diferentes) e entrega os disparos novos via
- * notificação nativa do navegador + toast in-app. Não renderiza nada visível. */
+/** RF-18/UC-07 — notificações em tempo real. Quem avalia as regras é o scheduler do backend;
+ * aqui só mantemos o WebSocket aberto (via proxy do Vite) e entregamos cada notificação como
+ * toast in-app + notificação nativa do navegador. Não renderiza nada visível. */
 export default function NotificationScheduler() {
   const qc = useQueryClient();
+  const logado = useAuthStore((s) => !!s.token);
   const token = useAuthStore((s) => s.token);
   const pushToast = useToastStore((s) => s.push);
+  const wsRef = useRef(null);
 
   useEffect(() => {
-    if (!token) return undefined;
+    if (!logado) return undefined;
+    let encerrado = false;
+    let tentativas = 0;
+    let timer = null;
 
-    const processar = async (classe) => {
-      const disparadas = await api.reavaliarRegrasUsuario(classe);
-      if (disparadas.length === 0) return;
-      qc.invalidateQueries({ queryKey: ['userRules'] });
-      qc.invalidateQueries({ queryKey: ['userTriggers'] });
-      for (const t of disparadas) notificarDisparo(t, pushToast);
+    const conectar = () => {
+      const ws = new WebSocket(WS_URL);
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        ws.send(JSON.stringify({ tipo: 'autenticar', token: useAuthStore.getState().token }));
+      };
+
+      ws.onmessage = (ev) => {
+        let msg;
+        try {
+          msg = JSON.parse(ev.data);
+        } catch {
+          return;
+        }
+        if (msg.tipo === 'autenticado') {
+          tentativas = 0;
+        } else if (msg.tipo === 'notificacao' && msg.notificacao) {
+          const disparo = mapNotificacao(msg.notificacao);
+          notificarDisparo(disparo, pushToast);
+          qc.invalidateQueries({ queryKey: ['userTriggers'] });
+          qc.invalidateQueries({ queryKey: ['userRules'] });
+        }
+        // {"tipo":"ping"} é só keep-alive do servidor — ignorado.
+      };
+
+      ws.onclose = async (ev) => {
+        if (encerrado) return;
+        // 4401 = token inválido/expirado: renova antes de reconectar (sem refresh válido, desloga).
+        if (ev.code === 4401) {
+          try {
+            await renovarTokens();
+          } catch {
+            return;
+          }
+        }
+        const espera = Math.min(1000 * 2 ** tentativas, RECONEXAO_MAX_MS);
+        tentativas += 1;
+        timer = setTimeout(conectar, espera);
+      };
     };
 
-    processar('RENDA_VARIAVEL');
-    processar('CRIPTO');
-    const idRendaVariavel = setInterval(() => processar('RENDA_VARIAVEL'), INTERVALO_MS.RENDA_VARIAVEL);
-    const idCripto = setInterval(() => processar('CRIPTO'), INTERVALO_MS.CRIPTO);
+    conectar();
     return () => {
-      clearInterval(idRendaVariavel);
-      clearInterval(idCripto);
+      encerrado = true;
+      clearTimeout(timer);
+      wsRef.current?.close();
+      wsRef.current = null;
     };
-  }, [token, qc, pushToast]);
+  }, [logado, qc, pushToast]);
+
+  // web push ligado nas preferências e permissão já concedida: garante a inscrição deste usuário no backend.
+  useEffect(() => {
+    if (!logado || !webPushSuportado()) return;
+    const { notificacoesPush, setFlag } = useUiStore.getState();
+    if (!notificacoesPush || Notification.permission !== 'granted') return;
+    ativarWebPush()
+      .then(() => setFlag('webPushAtivo', true))
+      .catch(() => setFlag('webPushAtivo', false));
+  }, [logado]);
+
+  // token renovado (ex: refresh após 401) — reautentica a conexão aberta sem derrubá-la.
+  useEffect(() => {
+    const ws = wsRef.current;
+    if (token && ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ tipo: 'autenticar', token }));
+  }, [token]);
 
   return null;
 }

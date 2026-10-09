@@ -20,8 +20,15 @@ export const usePositions = () => useQuery({ queryKey: ['positions'], queryFn: (
 export const usePortfolio = () => useQuery({ queryKey: ['portfolio'], queryFn: () => api.getPortfolioSummary() });
 export const useDistribution = () => useQuery({ queryKey: ['distribution'], queryFn: () => api.getDistribution() });
 export const useAlerts = () => useQuery({ queryKey: ['alerts'], queryFn: () => api.getAlerts() });
-export const useAnalysis = (t) =>
-  useQuery({ queryKey: ['analysis', t], queryFn: () => api.getAssetAnalysis(t), enabled: !!t });
+// sob demanda (botão na tela do ativo): a análise real leva até ~1 min e consome cota do Gemini.
+export const useAnalysis = (t, habilitado = true) =>
+  useQuery({
+    queryKey: ['analysis', t],
+    queryFn: () => api.getAssetAnalysis(t),
+    enabled: !!t && habilitado,
+    retry: false,
+    staleTime: 10 * 60_000,
+  });
 export const useDailySummary = () => useQuery({ queryKey: ['daily'], queryFn: () => api.getDailySummary() });
 
 export const useUserRules = () => useQuery({ queryKey: ['userRules'], queryFn: () => api.getUserRules() });
@@ -62,7 +69,8 @@ export function useCreateOperation() {
   return useMutation({
     mutationFn: (op) => api.createOperation(op),
     onSuccess: () => {
-      ['operations', 'positions', 'portfolio', 'distribution'].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
+      // registrar operação de ativo fora da watchlist o adiciona a ela (é assim que ganha ativo_id).
+      ['operations', 'positions', 'portfolio', 'distribution', 'watchlist'].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
     },
   });
 }

@@ -1,17 +1,14 @@
 /**
- * Camada de acesso a dados — mock em memória.
- * Cada função simula latência de rede e substitui 1:1 um endpoint REST do backend
- * FastAPI descrito na documentação técnica (seção 6). Ponto único de integração:
- * troque os corpos por `fetch(`${import.meta.env.VITE_API_URL}/...`)`.
+ * Camada de acesso a dados — ponto único de integração com o backend FastAPI (`/api/v1`,
+ * via proxy do Vite). O que a API expõe vem dela; o que ela ainda não expõe (notícias,
+ * rankings, score, sessões, perfil) continua em mock em memória, marcado nos métodos.
  */
-import { ASSETS, byTicker, generateCandles, toBRL } from './mock/assets.js';
+import { ASSETS, byTicker, generateCandles } from './mock/assets.js';
 import { RULES, SIGNALS, BACKTESTS, ruleOf } from './mock/signals.js';
-import { OPERATIONS, EQUITY_CURVE } from './mock/portfolio.js';
-import { CHAT_FALLBACK, DISCLAIMER } from './mock/ai.js';
-import { USER_RULES, USER_TRIGGERS, metricaOf, operadorOf } from './mock/userAlerts.js';
+import { DISCLAIMER } from './mock/ai.js';
 import { NEWS } from './mock/news.js';
 import { computeIndicators, lastDefined } from '../lib/indicators.js';
-import { fmtBRL, fmtPct, fmtNum, fmtDate } from '../lib/format.js';
+import { fmtBRL, fmtPct, fmtNum } from '../lib/format.js';
 import { useAuthStore, useUiStore } from '../store/index.js';
 
 const delay = (ms = 260) => new Promise((r) => setTimeout(r, ms));
@@ -29,24 +26,64 @@ function decodeJwtSub(token) {
   }
 }
 
-async function apiFetch(path, options = {}) {
+/** O access token dura 30 min: num 401, troca o refresh token por um par novo e repete a
+ * chamada uma vez. Renovações concorrentes compartilham a mesma promise (o refresh token é
+ * rotacionado pelo backend, então duas trocas paralelas invalidariam uma à outra). */
+let renovacaoEmAndamento = null;
+export function renovarTokens() {
+  if (renovacaoEmAndamento) return renovacaoEmAndamento;
+  const { refreshToken, setTokens, signOut } = useAuthStore.getState();
+  renovacaoEmAndamento = (async () => {
+    if (!refreshToken) throw new Error('Sessão expirada.');
+    const res = await fetch(`${API_BASE}/auth/refresh`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refresh_token: refreshToken }),
+    }).catch(() => null);
+    if (!res?.ok) {
+      signOut();
+      throw new Error('Sessão expirada. Entre novamente.');
+    }
+    const data = await res.json();
+    setTokens({ token: data.access_token, refreshToken: data.refresh_token });
+    return data.access_token;
+  })().finally(() => {
+    renovacaoEmAndamento = null;
+  });
+  return renovacaoEmAndamento;
+}
+
+async function apiFetch(path, options = {}, tentouRenovar = false) {
+  const { timeoutMs = 20_000, ...fetchOptions } = options;
   const token = useAuthStore.getState().token;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   let res;
   try {
     res = await fetch(`${API_BASE}${path}`, {
-      ...options,
+      ...fetchOptions,
+      signal: controller.signal,
       headers: {
         'Content-Type': 'application/json',
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        ...(options.headers || {}),
+        ...(fetchOptions.headers || {}),
       },
     });
-  } catch {
+  } catch (err) {
+    if (err.name === 'AbortError') throw new Error('O servidor demorou demais para responder. Tente novamente.');
     throw new Error('Não foi possível conectar ao servidor. Verifique sua conexão.');
+  } finally {
+    clearTimeout(timer);
+  }
+  if (res.status === 401 && token && !tentouRenovar && !path.startsWith('/auth/')) {
+    await renovarTokens();
+    return apiFetch(path, options, true);
   }
   if (!res.ok) {
     const body = await res.json().catch(() => null);
-    const err = new Error(body?.detail || 'Erro inesperado. Tente novamente.');
+    // 422 do FastAPI devolve `detail` como lista de erros de validação, não string.
+    const detalhe = Array.isArray(body?.detail) ? body.detail[0]?.msg : body?.detail;
+    const err = new Error(detalhe || 'Erro inesperado. Tente novamente.');
     err.status = res.status;
     throw err;
   }
@@ -65,13 +102,31 @@ const delayRead = async () => {
 };
 
 /* ---------- estado mutável da sessão (substituído pelo banco no backend) ---------- */
-let operations = [...OPERATIONS];
 // ticker -> {id, notificar, nome, tipo, setor, moeda} do último getWatchlist().
 // É também o único jeito que temos de resolver o UUID real de um ativo no backend: a API
 // não expõe um endpoint pra buscar/criar um ativo por ticker fora do fluxo de watchlist, então
 // cotação/histórico/indicadores só usam dados reais para ativos que já estão na watchlist —
 // para os demais (ex: resultado de busca ainda não adicionado), cai no mock mesmo.
 let watchlistIndex = new Map();
+// alerta_id -> último AlertaResponse visto em getUserRules() (pra saber o estado ao alternar).
+let alertasIndex = new Map();
+// sinal_id -> notificação SINAL_ATIVADO correspondente (pra marcar como lida no backend).
+let notificacoesSinal = new Map();
+
+/** Notificação do backend (REST ou WebSocket) no formato de "disparo" que a UI já usa. */
+export function mapNotificacao(n) {
+  const ticker = [...watchlistIndex.entries()].find(([, v]) => v.id === n.ativo_id)?.[0] ?? '';
+  return {
+    id: n.id,
+    ticker,
+    tipo: n.tipo,
+    texto: n.mensagem,
+    canais: ['PUSH'],
+    entrega: { PUSH: 'entregue' },
+    data: n.criado_em,
+    visto: n.lida,
+  };
+}
 
 /** Garante que watchlistIndex está populado antes de checar um ticker — quem entra direto numa
  * página de ativo (sem passar pelo Dashboard antes) pode chegar aqui com o índice ainda vazio,
@@ -79,14 +134,71 @@ let watchlistIndex = new Map();
 async function resolverAtivoCache(ticker) {
   if (watchlistIndex.has(ticker)) return watchlistIndex.get(ticker);
   try {
-    await api.getWatchlist();
+    await carregarWatchlistIndex();
   } catch {
     return undefined;
   }
   return watchlistIndex.get(ticker);
 }
 
-const PERIODO_BACKEND = { '1d': '1D', '1s': '1S', '1m': '1M', '3m': '3M', '1a': '1A', '5a': '5A' };
+/** GET /watchlist só pra (re)popular o índice ticker -> ativo, sem buscar cotações. */
+async function carregarWatchlistIndex() {
+  const items = await apiFetch('/watchlist');
+  watchlistIndex = new Map(
+    items.map((it) => [
+      it.ativo.ticker,
+      { id: it.ativo.id, notificar: it.notificar, nome: it.ativo.nome, tipo: it.ativo.tipo, setor: it.ativo.setor, moeda: it.ativo.moeda },
+    ]),
+  );
+  return items;
+}
+
+/** Sinais reais de um ativo (GET /ativos/{id}/sinais), cada um com seu backtest. */
+async function sinaisReais(ticker, ativoId, apenasAtivos) {
+  const sinais = await apiFetch(`/ativos/${ativoId}/sinais`);
+  const filtrados = sinais.filter((s) => !apenasAtivos || !s.data_desativacao);
+  return Promise.all(
+    filtrados.map(async (s) => {
+      const bt = await apiFetch(`/ativos/${ativoId}/sinais/${s.regra_id}/backtest`).catch(() => null);
+      return {
+        id: s.id,
+        ticker,
+        regra_id: s.regra_id,
+        data_ativacao: s.data_ativacao,
+        data_desativacao: s.data_desativacao,
+        // a API real só devolve um valor de contexto ("valor", stringificado), não o
+        // conjunto rico por indicador que o mock tem — cai num único campo.
+        contexto: { valor: Number(s.contexto?.valor) },
+        regra: {
+          nome: s.regra_nome,
+          descricao: s.regra_descricao,
+          peso: 0, // não exposto pela API real (existe um cálculo no backend, mas sem rota pública)
+          tom: tonePorNome(s.regra_nome),
+        },
+        backtest: bt
+          ? {
+              ocorrencias: bt.total_ocorrencias,
+              ret5: bt.retorno_medio_5_pregoes != null ? Number(bt.retorno_medio_5_pregoes) : null,
+              ret20: bt.retorno_medio_20_pregoes != null ? Number(bt.retorno_medio_20_pregoes) : null,
+              ret60: bt.retorno_medio_60_pregoes != null ? Number(bt.retorno_medio_60_pregoes) : null,
+            }
+          : { ocorrencias: 0, ret5: null, ret20: null, ret60: null },
+      };
+    }),
+  );
+}
+
+/** O 422 de quantidade insuficiente da API traz só o ativo_id no `detail` — troca por uma
+ * mensagem legível, mantendo as demais validações (ex: data futura) como vieram. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function traduzirErroOperacao(err, mensagem) {
+  if (err.status === 422 && UUID_RE.test(err.message)) err.message = mensagem;
+  throw err;
+}
+
+// a API devolve percentuais como fração decimal em string ("0.159" = 15,9%).
+const fracaoParaPct = (v) => (v == null ? null : Number(v) * 100);
+
 const PERIODO_TAMANHO = { '1d': 2, '1s': 6, '1m': 24, '3m': 68, '1a': 254, '5a': Infinity };
 
 const mapCotacao = (ticker, cot) => ({
@@ -107,12 +219,14 @@ function tonePorNome(nome) {
   return TONS_SINAL[Math.abs(hash) % TONS_SINAL.length];
 }
 
-/** Busca o histórico real (sempre em 5A, pra dar lookback suficiente pro SMA200 etc.) e
+/** Busca o histórico real (em 3M, o maior período do plano gratuito da brapi) e
  * calcula os indicadores localmente com `computeIndicators` — a API tem um endpoint de
  * indicadores, mas ele devolve só o valor atual de cada um, não a série por candle que os
  * gráficos precisam, então reaproveitar o cálculo local é mais simples e fica consistente. */
 async function fetchRealCandlesEIndicadores(ativoId) {
-  const pontos = await apiFetch(`/ativos/${ativoId}/historico?periodo=5A`);
+  // a brapi no plano gratuito só aceita 1M e 3M — 3M é o maior lookback possível (dá pra SMA 20/50;
+  // a SMA 200 fica vazia). O recorte por período (1M/3M) é feito por quem chama.
+  const pontos = await apiFetch(`/ativos/${ativoId}/historico?periodo=3M`);
   const candles = pontos
     .map((p) => ({
       time: p.data.slice(0, 10),
@@ -128,87 +242,12 @@ async function fetchRealCandlesEIndicadores(ativoId) {
 }
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 let readAlerts = new Set();
-let userRules = [...USER_RULES];
-let userTriggers = [...USER_TRIGGERS];
-let vistosTriggers = new Set();
-/* ---------- agendador de reavaliação de regras (RF-18, RN-06, RN-11, RN-13) ---------- */
-let baselineRegras = new Map(); // ruleId -> última condição avaliada (atingido/não)
-let ultimoDisparoDiario = new Map(); // ruleId -> 'YYYY-MM-DD' do último disparo (frequência DIARIA)
 const hAgo = (n) => new Date(Date.now() - n * 3600_000).toISOString();
 let sessions = [
   { id: 'se1', dispositivo: 'Chrome · Windows', local: 'São Paulo, BR', atual: true, ultimo_acesso: new Date().toISOString() },
   { id: 'se2', dispositivo: 'App · iPhone', local: 'São Paulo, BR', atual: false, ultimo_acesso: hAgo(6) },
   { id: 'se3', dispositivo: 'Edge · Windows', local: 'Campinas, BR', atual: false, ultimo_acesso: hAgo(72) },
 ];
-
-/** Avalia uma regra do usuário contra os indicadores vigentes do ativo. */
-const evaluateRule = (rule) => {
-  const asset = byTicker(rule.ticker);
-  const candles = generateCandles(rule.ticker);
-  const ind = computeIndicators(candles);
-  const last = candles[candles.length - 1];
-  const prev = candles[candles.length - 2];
-  const sma20 = lastDefined(ind.sma20);
-  const atual = {
-    PRECO: last.close,
-    VAR_DIA: ((last.close - prev.close) / prev.close) * 100,
-    RSI: lastDefined(ind.rsi14),
-    DIST_SMA20: sma20 ? ((last.close - sma20) / sma20) * 100 : null,
-    VOL_REL: lastDefined(ind.volRel),
-  }[rule.metrica];
-  const atingido = rule.operador === 'GTE' ? atual >= rule.valor : atual <= rule.valor;
-  const m = metricaOf(rule.metrica);
-  const fmt = (v) =>
-    v == null
-      ? '—'
-      : m.unidade === 'moeda'
-        ? new Intl.NumberFormat('pt-BR', { style: 'currency', currency: asset.moeda }).format(v)
-        : `${new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v)}${m.unidade}`;
-  return {
-    valor_atual: atual,
-    valor_atual_label: fmt(atual),
-    alvo_label: fmt(rule.valor),
-    atingido,
-    // proximidade do alvo (0–100), na direção do operador
-    progresso:
-      atual == null || !rule.valor || !atual
-        ? 0
-        : Math.max(0, Math.min(100, (rule.operador === 'GTE' ? atual / rule.valor : rule.valor / atual) * 100)),
-    condicao: `${m.label} ${operadorOf(rule.operador).simbolo} ${fmt(rule.valor)}`,
-    moeda: asset.moeda,
-  };
-};
-
-/** O cliente web só consegue entregar de verdade o canal PUSH (Notification API do
- * navegador). E-mail, mobile e bandeja do Windows exigiriam um backend/app nativo —
- * o disparo é registrado no histórico, mas marcado como simulado (nunca "entregue"). */
-const statusEntregaCanal = (canal) => {
-  if (canal !== 'PUSH') return 'simulado';
-  if (typeof Notification === 'undefined') return 'indisponivel';
-  return Notification.permission === 'granted' && useUiStore.getState().notificacoesPush ? 'entregue' : 'indisponivel';
-};
-
-/** Registra o disparo de uma regra do usuário e aplica RN-13 (frequência). */
-const dispararGatilhoRegra = (rule) => {
-  const avaliacao = evaluateRule(rule);
-  const novo = {
-    id: `t${Date.now()}${Math.random().toString(36).slice(2, 6)}`,
-    regra_id: rule.id,
-    ticker: rule.ticker,
-    texto: `${avaliacao.condicao} — valor atual ${avaliacao.valor_atual_label}.`,
-    canais: rule.canais,
-    entrega: Object.fromEntries(rule.canais.map((c) => [c, statusEntregaCanal(c)])),
-    data: new Date().toISOString(),
-  };
-  userTriggers = [novo, ...userTriggers];
-
-  if (rule.frequencia === 'UMA_VEZ') {
-    userRules = userRules.map((r) => (r.id === rule.id ? { ...r, ativa: false } : r));
-  } else if (rule.frequencia === 'DIARIA') {
-    ultimoDisparoDiario.set(rule.id, novo.data.slice(0, 10));
-  }
-  return novo;
-};
 
 const quoteOf = (ticker) => {
   const candles = generateCandles(ticker);
@@ -237,6 +276,7 @@ export const api = {
     const data = await apiFetch('/auth/login', { method: 'POST', body: JSON.stringify({ email, senha }) });
     return {
       token: data.access_token,
+      refreshToken: data.refresh_token,
       // o backend não devolve o nome no login — deriva do e-mail, como a UI já espera.
       usuario: { id: decodeJwtSub(data.access_token), nome: email.split('@')[0].replace(/^./, (c) => c.toUpperCase()), email },
     };
@@ -244,11 +284,21 @@ export const api = {
   async register({ nome, email, senha }) {
     try {
       const data = await apiFetch('/usuarios', { method: 'POST', body: JSON.stringify({ nome, email, senha }) });
-      return { token: data.access_token, usuario: { id: decodeJwtSub(data.access_token), nome, email } };
+      return {
+        token: data.access_token,
+        refreshToken: data.refresh_token,
+        usuario: { id: decodeJwtSub(data.access_token), nome, email },
+      };
     } catch (err) {
       if (err.status === 409) err.code = 'EMAIL_EXISTS';
       throw err;
     }
+  },
+  async logout() {
+    const { refreshToken } = useAuthStore.getState();
+    if (!refreshToken) return;
+    // logout é best-effort: mesmo se o backend falhar, a sessão local é encerrada por quem chamou.
+    await apiFetch('/auth/logout', { method: 'POST', body: JSON.stringify({ refresh_token: refreshToken }) }).catch(() => {});
   },
   async recoverPassword({ email }) {
     await delay(520);
@@ -308,6 +358,7 @@ export const api = {
       tipo: cached.tipo,
       setor: cached.setor,
       moeda: cached.moeda,
+      fonte: cached.tipo === 'CRIPTO' ? 'Binance' : 'brapi',
       cotacao: mapCotacao(ticker, cot),
     };
   },
@@ -371,65 +422,48 @@ export const api = {
         'Volume relativo': lastDefined(ind.volRel),
       };
     }
-    const { ind } = await fetchRealCandlesEIndicadores(cached.id);
+    // valores calculados pelo backend (GET /ativos/{id}/indicadores) — a série por candle
+    // dos gráficos continua sendo calculada localmente a partir do histórico real.
+    const lista = await apiFetch(`/ativos/${cached.id}/indicadores`);
+    const ind = (tipo, periodo) =>
+      lista.find((i) => i.tipo === tipo && (periodo == null || i.parametros?.periodo === periodo));
+    const num = (v) => (v == null ? null : Number(v));
+    const macd = ind('MACD');
+    const boll = ind('BOLLINGER');
     return {
-      'SMA (20)': lastDefined(ind.sma20),
-      'SMA (50)': lastDefined(ind.sma50),
-      'SMA (200)': lastDefined(ind.sma200),
-      'RSI (14)': lastDefined(ind.rsi14),
-      'MACD (12,26,9)': lastDefined(ind.macd.line),
-      'Sinal MACD': lastDefined(ind.macd.signal),
-      'Bollinger sup.': lastDefined(ind.bollinger.upper),
-      'Bollinger inf.': lastDefined(ind.bollinger.lower),
-      'Volume relativo': lastDefined(ind.volRel),
+      'SMA (20)': num(ind('SMA', 20)?.valor),
+      'SMA (50)': num(ind('SMA', 50)?.valor),
+      'SMA (200)': num(ind('SMA', 200)?.valor),
+      'RSI (14)': num(ind('RSI', 14)?.valor),
+      'MACD (12,26,9)': num(macd?.valor),
+      'Sinal MACD': num(macd?.valores_auxiliares?.linha_sinal),
+      'Bollinger sup.': num(boll?.valores_auxiliares?.banda_superior),
+      'Bollinger inf.': num(boll?.valores_auxiliares?.banda_inferior),
+      'Volume relativo': num(ind('VOLUME_RELATIVO')?.valor),
     };
   },
 
   /* ----- sinais (RF-07, RF-08) ----- */
   async getSignals({ ticker, apenasAtivos = true } = {}) {
-    // só dá pra buscar sinal real de um ativo por vez (GET /ativos/{id}/sinais) — sem um
-    // ticker resolvível na watchlist, ou sem ticker nenhum (visão geral do Dashboard, que
-    // cruza vários ativos), continua no mock.
-    const cached = ticker ? await resolverAtivoCache(ticker) : null;
-    if (!ticker || !cached) {
+    if (!ticker) {
+      // visão geral (Dashboard / página de alertas): junta os sinais reais de cada ativo da watchlist.
+      await carregarWatchlistIndex();
+      const porAtivo = await Promise.all(
+        [...watchlistIndex.entries()].map(([t, info]) => sinaisReais(t, info.id, apenasAtivos).catch(() => [])),
+      );
+      return porAtivo.flat().sort((a, b) => b.data_ativacao.localeCompare(a.data_ativacao));
+    }
+    const cached = await resolverAtivoCache(ticker);
+    if (!cached) {
+      // ativo fora da watchlist não tem ativo_id na API — sem como buscar sinal real.
       await delayRead();
-      return SIGNALS.filter((s) => (!ticker || s.ticker === ticker) && (!apenasAtivos || !s.data_desativacao)).map((s) => ({
+      return SIGNALS.filter((s) => s.ticker === ticker && (!apenasAtivos || !s.data_desativacao)).map((s) => ({
         ...s,
         regra: ruleOf(s.regra_id),
         backtest: BACKTESTS[s.regra_id],
       }));
     }
-    const sinais = await apiFetch(`/ativos/${cached.id}/sinais`);
-    const filtrados = sinais.filter((s) => !apenasAtivos || !s.data_desativacao);
-    return Promise.all(
-      filtrados.map(async (s) => {
-        const bt = await apiFetch(`/ativos/${cached.id}/sinais/${s.regra_id}/backtest`).catch(() => null);
-        return {
-          id: s.id,
-          ticker,
-          regra_id: s.regra_id,
-          data_ativacao: s.data_ativacao,
-          data_desativacao: s.data_desativacao,
-          // a API real só devolve um valor de contexto ("valor", stringificado), não o
-          // conjunto rico por indicador que o mock tem — cai num único campo.
-          contexto: { valor: Number(s.contexto?.valor) },
-          regra: {
-            nome: s.regra_nome,
-            descricao: s.regra_descricao,
-            peso: 0, // não exposto pela API real (existe um cálculo no backend, mas sem rota pública)
-            tom: tonePorNome(s.regra_nome),
-          },
-          backtest: bt
-            ? {
-                ocorrencias: bt.total_ocorrencias,
-                ret5: bt.retorno_medio_5_pregoes != null ? Number(bt.retorno_medio_5_pregoes) : null,
-                ret20: bt.retorno_medio_20_pregoes != null ? Number(bt.retorno_medio_20_pregoes) : null,
-                ret60: bt.retorno_medio_60_pregoes != null ? Number(bt.retorno_medio_60_pregoes) : null,
-              }
-            : { ocorrencias: 0, ret5: null, ret20: null, ret60: null },
-        };
-      }),
-    );
+    return sinaisReais(ticker, cached.id, apenasAtivos);
   },
   async getRules() {
     await delay(140);
@@ -483,17 +517,12 @@ export const api = {
 
   /* ----- watchlist (RF-03, RN-08) ----- */
   async getWatchlist() {
-    const items = await apiFetch('/watchlist');
-    watchlistIndex = new Map(
-      items.map((it) => [
-        it.ativo.ticker,
-        { id: it.ativo.id, notificar: it.notificar, nome: it.ativo.nome, tipo: it.ativo.tipo, setor: it.ativo.setor, moeda: it.ativo.moeda },
-      ]),
-    );
-    // contagem de sinais ainda vem do mock — endpoint de sinais não foi integrado ainda.
+    const items = await carregarWatchlistIndex();
     return Promise.all(
       items.map(async (it) => {
-        const sinais = SIGNALS.filter((s) => s.ticker === it.ativo.ticker && !s.data_desativacao).length;
+        const sinais = await apiFetch(`/ativos/${it.ativo.id}/sinais`)
+          .then((lista) => lista.filter((s) => !s.data_desativacao).length)
+          .catch(() => 0);
         // se a cotação real falhar (ex: BrAPI fora do ar, 503), cai pro mock em vez de quebrar a lista inteira.
         const cotacao = await apiFetch(`/ativos/${it.ativo.id}/cotacao`)
           .then((cot) => mapCotacao(it.ativo.ticker, cot))
@@ -534,188 +563,265 @@ export const api = {
 
   /* ----- portfólio (RF-10, RF-11, RF-12) ----- */
   async getOperations() {
-    await delayRead();
-    return [...operations].sort((a, b) => b.data.localeCompare(a.data));
+    const [ops, posicoes] = await Promise.all([
+      apiFetch('/operacoes'),
+      apiFetch('/portfolio/posicoes').catch(() => []),
+      carregarWatchlistIndex().catch(() => []),
+    ]);
+    // a operação só traz ativo_id — o ticker vem da watchlist ou das posições.
+    const tickerPorId = new Map([
+      ...posicoes.map((p) => [p.ativo_id, p.ticker]),
+      ...[...watchlistIndex.entries()].map(([t, info]) => [info.id, t]),
+    ]);
+    return ops
+      .map((o) => ({
+        id: o.id,
+        ativo_id: o.ativo_id,
+        ticker: tickerPorId.get(o.ativo_id) ?? '—',
+        tipo: o.tipo,
+        quantidade: Number(o.quantidade),
+        preco_unitario: Number(o.preco_unitario),
+        data: o.data,
+        criado_em: o.criado_em,
+      }))
+      .sort((a, b) => b.data.localeCompare(a.data));
   },
   async createOperation(op) {
-    await delay(620);
-    const nova = { ...op, id: `o${Date.now()}`, criado_em: new Date().toISOString() };
-    operations = [...operations, nova];
-    return nova;
+    let cached = await resolverAtivoCache(op.ticker);
+    if (!cached) {
+      // a API só cria o ativo (e lhe dá um ativo_id) quando ele entra na watchlist.
+      await apiFetch('/watchlist', { method: 'POST', body: JSON.stringify({ ticker: op.ticker }) });
+      await carregarWatchlistIndex();
+      cached = watchlistIndex.get(op.ticker);
+    }
+    return apiFetch('/operacoes', {
+      method: 'POST',
+      body: JSON.stringify({
+        ativo_id: cached.id,
+        tipo: op.tipo,
+        quantidade: String(op.quantidade),
+        preco_unitario: String(op.preco_unitario),
+        data: op.data,
+      }),
+    }).catch((err) => traduzirErroOperacao(err, 'Quantidade insuficiente em carteira para essa venda nessa data.'));
   },
   async deleteOperation(id) {
-    await delay(260);
-    operations = operations.filter((o) => o.id !== id);
+    await apiFetch(`/operacoes/${id}`, { method: 'DELETE' }).catch((err) =>
+      traduzirErroOperacao(err, 'Não é possível excluir: vendas posteriores ficariam sem quantidade em carteira.'),
+    );
     return { ok: true };
   },
   async getPositions() {
-    await delayRead();
-    const map = new Map();
-    for (const op of operations) {
-      const cur = map.get(op.ticker) ?? { ticker: op.ticker, quantidade: 0, custo: 0 };
-      const q = op.tipo === 'COMPRA' ? op.quantidade : -op.quantidade;
-      cur.quantidade += q;
-      cur.custo += q * op.preco_unitario;
-      map.set(op.ticker, cur);
-    }
-    return [...map.values()]
-      .filter((p) => p.quantidade > 0.0000001)
-      .map((p) => {
-        const asset = byTicker(p.ticker);
-        const cot = quoteOf(p.ticker);
-        const precoMedio = p.custo / p.quantidade;
-        const valorAtual = p.quantidade * cot.preco;
+    const [posicoes] = await Promise.all([apiFetch('/portfolio/posicoes'), carregarWatchlistIndex().catch(() => [])]);
+    const lista = await Promise.all(
+      posicoes.map(async (p) => {
+        const info = watchlistIndex.get(p.ticker) ?? {};
+        // variação do dia não vem na posição — sai da cotação atual do ativo.
+        const cot = await apiFetch(`/ativos/${p.ativo_id}/cotacao`).catch(() => null);
+        const quantidade = Number(p.quantidade);
+        const precoMedio = Number(p.preco_medio);
+        const custo = quantidade * precoMedio;
+        const valorAtual = Number(p.valor_mercado);
+        const valorBrl = Number(p.valor_mercado_brl);
+        const resultado = Number(p.lucro_nao_realizado);
+        const cambio = valorAtual ? valorBrl / valorAtual : 1;
         return {
-          ...p,
-          nome: asset.nome,
-          tipo: asset.tipo,
-          setor: asset.setor,
-          setorLabel: asset.setor === '—' ? asset.tipo : asset.setor,
-          moeda: asset.moeda,
-          preco_medio: +precoMedio.toFixed(2),
-          preco_atual: cot.preco,
-          variacao_pct: cot.variacao_pct,
-          valor_atual: +valorAtual.toFixed(2),
-          resultado: +(valorAtual - p.custo).toFixed(2),
-          resultado_pct: +(((valorAtual - p.custo) / p.custo) * 100).toFixed(2),
-          // agregados sempre em BRL (câmbio mockado)
-          valor_atual_brl: +toBRL(valorAtual, asset.moeda).toFixed(2),
-          custo_brl: +toBRL(p.custo, asset.moeda).toFixed(2),
+          ticker: p.ticker,
+          ativo_id: p.ativo_id,
+          quantidade,
+          custo,
+          nome: info.nome ?? p.ticker,
+          tipo: info.tipo ?? 'ACAO',
+          setor: info.setor ?? '—',
+          setorLabel: info.setor || info.tipo || '—',
+          moeda: info.moeda ?? 'BRL',
+          preco_medio: precoMedio,
+          preco_atual: Number(p.cotacao_atual),
+          variacao_pct: cot ? Number(cot.variacao_percentual) : 0,
+          valor_atual: valorAtual,
+          resultado,
+          resultado_pct: custo ? (resultado / custo) * 100 : 0,
+          lucro_realizado: Number(p.lucro_realizado),
+          valor_atual_brl: valorBrl,
+          custo_brl: custo * cambio,
         };
-      })
-      .sort((a, b) => b.valor_atual - a.valor_atual);
+      }),
+    );
+    return lista.filter((p) => p.quantidade > 0).sort((a, b) => b.valor_atual_brl - a.valor_atual_brl);
   },
   async getPortfolioSummary() {
-    // Derivado de getPositions() — que já paga a latência simulada; evita somar dois
-    // delays independentes (até ~1,6 s) para o que o usuário percebe como uma única busca.
-    const pos = await this.getPositions();
-    const valor = pos.reduce((a, p) => a + p.valor_atual_brl, 0);
-    const custo = pos.reduce((a, p) => a + p.custo_brl, 0);
-    const ultimo = EQUITY_CURVE[EQUITY_CURVE.length - 1];
+    const [r, cdi, ibov, pos, ops] = await Promise.all([
+      apiFetch('/portfolio/rentabilidade'),
+      apiFetch('/portfolio/benchmark?benchmark=CDI').catch(() => null),
+      apiFetch('/portfolio/benchmark?benchmark=IBOVESPA').catch(() => null),
+      this.getPositions(),
+      apiFetch('/operacoes').catch(() => []),
+    ]);
+    const pct = fracaoParaPct(r.percentual) ?? 0;
+    const pctCdi = fracaoParaPct(cdi?.rentabilidade_benchmark_percentual) ?? 0;
+    const pctIbov = fracaoParaPct(ibov?.rentabilidade_benchmark_percentual) ?? 0;
+    const valorTotal = Number(r.valor_mercado_brl);
+    const pesoTotal = pos.reduce((a, p) => a + p.valor_atual_brl, 0);
+    const variacaoDia = pesoTotal ? pos.reduce((a, p) => a + p.variacao_pct * p.valor_atual_brl, 0) / pesoTotal : 0;
+    // a API devolve só a rentabilidade acumulada (não uma série histórica): o gráfico liga
+    // o início (base 100, data da 1ª operação) ao valor de hoje, para carteira e benchmarks.
+    const hoje = new Date().toISOString().slice(0, 10);
+    const inicio = ops.map((o) => o.data).sort()[0] ?? hoje;
     return {
-      valor_total: +valor.toFixed(2),
-      custo_total: +custo.toFixed(2),
-      resultado: +(valor - custo).toFixed(2),
-      resultado_pct: +(((valor - custo) / custo) * 100).toFixed(2),
-      variacao_dia_pct: 0.84,
-      benchmarks: { cdi: +(ultimo.cdi - 100).toFixed(2), ibovespa: +(ultimo.ibovespa - 100).toFixed(2) },
-      curva: EQUITY_CURVE,
+      valor_total: valorTotal,
+      custo_total: Number(r.custo_base_brl),
+      resultado: Number(r.lucro_nao_realizado_brl) + Number(r.lucro_realizado_brl),
+      resultado_pct: pct,
+      variacao_dia_pct: variacaoDia,
+      benchmarks: { cdi: pctCdi, ibovespa: pctIbov },
+      curva: [
+        { data: inicio, carteira: 100, ibovespa: 100, cdi: 100 },
+        { data: hoje, carteira: +(100 + pct).toFixed(2), ibovespa: +(100 + pctIbov).toFixed(2), cdi: +(100 + pctCdi).toFixed(2) },
+      ],
     };
   },
   async getDistribution() {
-    // Mesma lógica de getPortfolioSummary — a latência já vem de getPositions().
-    const pos = await this.getPositions();
-    const total = pos.reduce((a, p) => a + p.valor_atual_brl, 0) || 1;
-    const group = (key) => {
-      const m = new Map();
-      pos.forEach((p) => m.set(p[key], (m.get(p[key]) ?? 0) + p.valor_atual_brl));
-      return [...m.entries()]
-        .map(([nome, valor]) => ({ nome, valor: +valor.toFixed(2), pct: +((valor / total) * 100).toFixed(1) }))
+    const [d, r] = await Promise.all([apiFetch('/portfolio/distribuicao'), apiFetch('/portfolio/rentabilidade')]);
+    const total = Number(r.valor_mercado_brl);
+    const grupo = (obj) =>
+      Object.entries(obj ?? {})
+        .map(([nome, fracao]) => ({ nome, valor: +(Number(fracao) * total).toFixed(2), pct: +(Number(fracao) * 100).toFixed(1) }))
         .sort((a, b) => b.valor - a.valor);
-    };
-    return { classe: group('tipo'), setor: group('setorLabel'), moeda: group('moeda') };
+    return { classe: grupo(d.por_classe), setor: grupo(d.por_setor), moeda: grupo(d.por_moeda) };
   },
 
   /* ----- alertas (RF-09) ----- */
   async getAlerts() {
-    await delayRead();
-    return SIGNALS.map((s) => ({
-      id: s.id,
-      ticker: s.ticker,
-      regra: ruleOf(s.regra_id),
-      contexto: s.contexto,
-      backtest: BACKTESTS[s.regra_id],
-      data: s.data_ativacao,
-      ativo: !s.data_desativacao,
-      lido: readAlerts.has(s.id),
-    })).sort((a, b) => b.data.localeCompare(a.data));
+    const [sinais, notificacoes] = await Promise.all([this.getSignals({ apenasAtivos: false }), apiFetch('/notificacoes')]);
+    notificacoesSinal = new Map(
+      notificacoes.filter((n) => n.tipo === 'SINAL_ATIVADO' && n.contexto?.sinal_id).map((n) => [n.contexto.sinal_id, n]),
+    );
+    return sinais.map((s) => {
+      const notif = notificacoesSinal.get(s.id);
+      return {
+        id: s.id,
+        ticker: s.ticker,
+        regra: s.regra,
+        contexto: s.contexto,
+        backtest: s.backtest,
+        data: s.data_ativacao,
+        ativo: !s.data_desativacao,
+        // "lido" vem da notificação do sinal no backend; sinal sem notificação (ex: ativo com
+        // aviso desligado na watchlist) só pode ser marcado como lido localmente.
+        lido: notif ? notif.lida || readAlerts.has(s.id) : readAlerts.has(s.id),
+      };
+    });
   },
   async markAlertRead(id) {
-    await delay(120);
     readAlerts = new Set([...readAlerts, id]);
+    const notif = notificacoesSinal.get(id);
+    if (notif && !notif.lida) await apiFetch(`/notificacoes/${notif.id}/lida`, { method: 'PATCH' });
     return { ok: true };
   },
   async markAllAlertsRead() {
-    await delay(220);
-    readAlerts = new Set([...readAlerts, ...SIGNALS.map((s) => s.id)]);
+    const pendentes = [...notificacoesSinal.values()].filter((n) => !n.lida);
+    await Promise.all(pendentes.map((n) => apiFetch(`/notificacoes/${n.id}/lida`, { method: 'PATCH' })));
+    readAlerts = new Set([...readAlerts, ...notificacoesSinal.keys()]);
     return { ok: true };
   },
 
-  /* ----- alertas definidos pelo usuário ----- */
+  /* ----- alertas de preço do usuário (API real: /alertas e /notificacoes) -----
+   * O backend só suporta condição de preço (≥ / ≤), entregue in-app via WebSocket. Quem
+   * avalia as regras é o scheduler do backend — o front só cadastra e lista. */
   async getUserRules() {
-    await delayRead();
-    return userRules
-      .map((r) => ({ ...r, ativo: byTicker(r.ticker), avaliacao: evaluateRule(r) }))
+    const alertas = await apiFetch('/alertas');
+    alertasIndex = new Map(alertas.map((a) => [a.id, a]));
+    // uma cotação por ativo distinto (não por alerta), pra mostrar o "valor atual" e o progresso.
+    const ids = [...new Set(alertas.map((a) => a.ativo.id))];
+    const precos = new Map(
+      await Promise.all(
+        ids.map(async (id) => [id, await apiFetch(`/ativos/${id}/cotacao`).then((c) => Number(c.preco)).catch(() => null)]),
+      ),
+    );
+    return alertas
+      .map((a) => {
+        const operador = a.tipo_condicao === 'PRECO_MAIOR_IGUAL' ? 'GTE' : 'LTE';
+        const valor = Number(a.valor_alvo);
+        const atual = precos.get(a.ativo.id);
+        const fmt = (v) => (v == null ? '—' : fmtBRL(v, a.moeda_alvo));
+        const atingido = atual == null ? a.ultimo_estado : operador === 'GTE' ? atual >= valor : atual <= valor;
+        return {
+          id: a.id,
+          ticker: a.ativo.ticker,
+          ativo: a.ativo,
+          metrica: 'PRECO',
+          operador,
+          valor,
+          ativa: a.habilitado,
+          criada_em: a.criado_em,
+          disparado_em: a.disparado_em,
+          avaliacao: {
+            valor_atual: atual,
+            valor_atual_label: fmt(atual),
+            alvo_label: fmt(valor),
+            atingido,
+            progresso:
+              atual == null || !valor ? 0 : Math.max(0, Math.min(100, (operador === 'GTE' ? atual / valor : valor / atual) * 100)),
+            condicao: `Preço ${operador === 'GTE' ? '≥' : '≤'} ${fmt(valor)}`,
+            moeda: a.moeda_alvo,
+          },
+        };
+      })
       .sort((a, b) => Number(b.ativa) - Number(a.ativa) || b.criada_em.localeCompare(a.criada_em));
   },
-  async createUserRule(rule) {
-    await delay(520);
-    const nova = { ...rule, id: `ua${Date.now()}`, ativa: true, criada_em: new Date().toISOString() };
-    userRules = [nova, ...userRules];
-    const avaliacao = evaluateRule(nova);
-    // se a condição já está satisfeita no momento da criação, o disparo é imediato
-    const disparo = avaliacao.atingido ? dispararGatilhoRegra(nova) : null;
-    baselineRegras.set(nova.id, avaliacao.atingido);
-    return { ...nova, avaliacao, disparo };
+  async createUserRule({ ticker, operador, valor }) {
+    const a = await apiFetch('/alertas', {
+      method: 'POST',
+      body: JSON.stringify({
+        ticker,
+        tipo_condicao: operador === 'GTE' ? 'PRECO_MAIOR_IGUAL' : 'PRECO_MENOR_IGUAL',
+        valor_alvo: String(valor),
+      }),
+    });
+    // o disparo nunca é imediato aqui: chega pelo WebSocket no próximo ciclo do scheduler.
+    return { ...a, disparo: null };
   },
   async toggleUserRule(id) {
-    await delay(200);
-    userRules = userRules.map((r) => (r.id === id ? { ...r, ativa: !r.ativa } : r));
+    const atual = alertasIndex.get(id);
+    await apiFetch(`/alertas/${id}`, { method: 'PATCH', body: JSON.stringify({ ativo: !atual?.habilitado }) });
     return { ok: true };
   },
-  async updateUserRule(id, patch) {
-    await delay(480);
-    if (!(Number(patch.valor) > 0)) throw new Error('Informe um valor-alvo maior que zero.');
-    userRules = userRules.map((r) => (r.id === id ? { ...r, ...patch } : r));
-    const atualizada = userRules.find((r) => r.id === id);
-    const avaliacao = evaluateRule(atualizada);
-    // RN-11: editar rearma a regra, mas não dispara na hora — mesmo que a condição já esteja
-    // satisfeita, o disparo só ocorre na próxima transição de não-atendida para atendida. Por
-    // isso o agendador precisa "esquecer" o estado anterior e recomeçar do valor pós-edição.
-    baselineRegras.set(id, avaliacao.atingido);
-    return { ...atualizada, avaliacao };
+  async updateUserRule(id, { operador, valor }) {
+    if (!(Number(valor) > 0)) throw new Error('Informe um valor-alvo maior que zero.');
+    return apiFetch(`/alertas/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        tipo_condicao: operador === 'GTE' ? 'PRECO_MAIOR_IGUAL' : 'PRECO_MENOR_IGUAL',
+        valor_alvo: String(valor),
+      }),
+    });
   },
   async deleteUserRule(id) {
-    await delay(220);
-    userRules = userRules.filter((r) => r.id !== id);
-    baselineRegras.delete(id);
-    ultimoDisparoDiario.delete(id);
+    await apiFetch(`/alertas/${id}`, { method: 'DELETE' });
     return { ok: true };
   },
   async getUserTriggers() {
-    await delayRead();
-    return userTriggers.slice(0, 20).map((t) => ({ ...t, visto: vistosTriggers.has(t.id) }));
+    const notificacoes = await apiFetch('/notificacoes');
+    return notificacoes.slice(0, 20).map(mapNotificacao);
   },
   async marcarTriggersVistos() {
-    await delay(120);
-    vistosTriggers = new Set([...vistosTriggers, ...userTriggers.map((t) => t.id)]);
+    const notificacoes = await apiFetch('/notificacoes');
+    await Promise.all(
+      notificacoes.filter((n) => !n.lida).map((n) => apiFetch(`/notificacoes/${n.id}/lida`, { method: 'PATCH' })),
+    );
     return { ok: true };
   },
-  /** RN-06 — agendador em memória: reavalia as regras ativas do usuário periodicamente,
-   * separando renda variável (15 min) de cripto (5 min) via `classe`. Dispara apenas na
-   * transição de não-atendida para atendida (RN-11) e respeita a frequência (RN-13).
-   * Retorna os disparos novos desta passada, para a UI decidir como notificar. */
-  async reavaliarRegrasUsuario(classe) {
-    const hoje = new Date().toISOString().slice(0, 10);
-    const disparadas = [];
-    for (const rule of userRules) {
-      if (!rule.ativa) {
-        baselineRegras.delete(rule.id);
-        continue;
-      }
-      const ehCripto = byTicker(rule.ticker)?.tipo === 'CRIPTO';
-      if (classe && (ehCripto ? classe !== 'CRIPTO' : classe !== 'RENDA_VARIAVEL')) continue;
 
-      const atingidoAgora = evaluateRule(rule).atingido;
-      const atingidoAntes = baselineRegras.has(rule.id) ? baselineRegras.get(rule.id) : atingidoAgora;
-      baselineRegras.set(rule.id, atingidoAgora);
-
-      if (!atingidoAntes && atingidoAgora) {
-        if (rule.frequencia === 'DIARIA' && ultimoDisparoDiario.get(rule.id) === hoje) continue;
-        disparadas.push(dispararGatilhoRegra(rule));
-      }
-    }
-    return disparadas;
+  /* ----- web push (RF-18) ----- */
+  async getChavePublicaWebPush() {
+    return apiFetch('/web-push/chave-publica');
+  },
+  async registrarInscricaoWebPush(inscricao) {
+    return apiFetch('/web-push/inscricoes', { method: 'POST', body: JSON.stringify(inscricao) });
+  },
+  async removerInscricaoWebPush(endpoint) {
+    await apiFetch(`/web-push/inscricoes?endpoint=${encodeURIComponent(endpoint)}`, { method: 'DELETE' });
+    return { ok: true };
   },
 
   /* ----- IA (RF-13, RF-14, RF-15) ----- */
@@ -723,6 +829,19 @@ export const api = {
    * reais do ativo (nunca fixture estática). UC-03 alternativo: com o toggle de
    * desenvolvedor "IA indisponível" ligado, simula falha do provedor. */
   async getAssetAnalysis(ticker) {
+    const cached = await resolverAtivoCache(ticker);
+    if (cached) {
+      // Gemini no plano gratuito leva de 5 a 48 s — timeout folgado pra não abortar antes do backend.
+      const a = await apiFetch(`/ativos/${cached.id}/analise`, { timeoutMs: 70_000 });
+      return {
+        texto: a.texto,
+        provedor: 'gemini',
+        modelo: a.modelo,
+        em_cache: a.em_cache,
+        gerado_em: a.gerado_em,
+        disclaimer: a.aviso_legal,
+      };
+    }
     await delay(900);
     if (useUiStore.getState().iaIndisponivel) {
       throw new Error('Serviço de análise por IA temporariamente indisponível.');
@@ -737,21 +856,25 @@ export const api = {
     };
   },
   async getDailySummary() {
-    await delay(400);
-    if (useUiStore.getState().iaIndisponivel) {
-      throw new Error('Serviço de análise por IA temporariamente indisponível.');
-    }
-    return { texto: await gerarResumoDiario(), disclaimer: DISCLAIMER, gerado_em: new Date().toISOString() };
+    // o resumo diário é gerado pelo scheduler do backend e entregue como notificação RESUMO_DIARIO.
+    const notificacoes = await apiFetch('/notificacoes');
+    const ultimo = notificacoes
+      .filter((n) => n.tipo === 'RESUMO_DIARIO')
+      .sort((a, b) => b.criado_em.localeCompare(a.criado_em))[0];
+    if (!ultimo) return null;
+    return {
+      texto: ultimo.contexto?.texto ?? ultimo.mensagem,
+      disclaimer: ultimo.contexto?.aviso_legal ?? DISCLAIMER,
+      gerado_em: ultimo.criado_em,
+    };
   },
-  /** RF-15/UC-06 — function calling simulado: um roteador por palavra-chave escolhe
-   * uma das funções que consultam o estado real da carteira (nunca texto fixo) e a
-   * resposta é composta a partir do retorno dela — grounding (RN-02). */
-  async askAI(pergunta) {
-    await delay(900);
-    const intent = interpretarPergunta(pergunta);
-    if (!intent) return { texto: CHAT_FALLBACK, ferramentas: [], disclaimer: DISCLAIMER };
-    const { texto, ferramentas } = await CHAT_FUNCTIONS[intent.fn](intent.args);
-    return { texto, ferramentas, disclaimer: DISCLAIMER };
+  /** RF-15/UC-06 — chat com a IA do backend (POST /chat), que consulta a carteira do usuário.
+   * `historico` são as mensagens anteriores da conversa ({papel, texto}). */
+  async askAI(pergunta, historico = []) {
+    // o backend aceita no máximo 20 mensagens, e a última precisa ser do usuário.
+    const mensagens = [...historico, { papel: 'usuario', texto: pergunta }].slice(-20);
+    const r = await apiFetch('/chat', { method: 'POST', body: JSON.stringify({ mensagens }), timeoutMs: 90_000 });
+    return { texto: r.texto, ferramentas: [], disclaimer: r.aviso_legal, modelo: r.modelo };
   },
 };
 
@@ -806,167 +929,4 @@ function gerarAnaliseAtivo(ticker) {
   }
 
   return frases.join(' ');
-}
-
-async function gerarResumoDiario() {
-  const resumo = await api.getPortfolioSummary();
-  const pos = await api.getPositions();
-  const sinais24h = SIGNALS.filter(
-    (s) => !s.data_desativacao && Date.now() - new Date(s.data_ativacao).getTime() <= 24 * 3_600_000,
-  );
-  const frases = [];
-
-  frases.push(`A carteira apresenta variação do dia de ${fmtPct(resumo.variacao_dia_pct)}.`);
-
-  const diffIbov = resumo.resultado_pct - resumo.benchmarks.ibovespa;
-  const diffCdi = resumo.resultado_pct - resumo.benchmarks.cdi;
-  frases.push(
-    `No período acompanhado, o resultado acumulado é de ${fmtPct(resumo.resultado_pct)}, contra ${fmtPct(resumo.benchmarks.ibovespa)} ` +
-      `do Ibovespa (${fmtPct(diffIbov)}) e ${fmtPct(resumo.benchmarks.cdi)} do CDI (${fmtPct(diffCdi)}).`,
-  );
-
-  if (pos.length > 0) {
-    // Comparação em BRL — as posições em USD (cripto) precisam ser convertidas para
-    // ficarem na mesma escala das posições em BRL antes de comparar contribuições.
-    const resultadoBRL = (p) => p.valor_atual_brl - p.custo_brl;
-    const maior = [...pos].sort((a, b) => Math.abs(resultadoBRL(b)) - Math.abs(resultadoBRL(a)))[0];
-    const contribuicao = resultadoBRL(maior);
-    const participacao = resumo.resultado !== 0 ? (contribuicao / resumo.resultado) * 100 : 0;
-    frases.push(
-      `${maior.ticker} responde pela maior contribuição individual ao resultado acumulado, com ${fmtBRL(contribuicao)} ` +
-        `(${fmtNum(Math.abs(participacao), 0)}% do resultado total da carteira).`,
-    );
-  }
-
-  frases.push(
-    sinais24h.length > 0
-      ? `${sinais24h.length} sinal(is) foram ativados nas últimas 24 horas: ${sinais24h.map((s) => `${s.ticker} (${ruleOf(s.regra_id).nome})`).join(', ')}.`
-      : 'Nenhum sinal foi ativado nas últimas 24 horas.',
-  );
-
-  return frases.join(' ');
-}
-
-/* ----- function calling simulado do chat (RF-15) -----
- * Cada função abaixo consulta o estado real da carteira via `api.*` (as mesmas
- * funções usadas por Dashboard/Portfólio/Alertas) e compõe a resposta a partir
- * do retorno — os números nunca são inventados no texto. */
-
-async function obterRentabilidadeCarteira() {
-  const resumo = await api.getPortfolioSummary();
-  return {
-    ferramentas: ['obterRentabilidadeCarteira()'],
-    texto:
-      `O resultado não realizado da carteira é ${fmtBRL(resumo.resultado)} (${fmtPct(resumo.resultado_pct)}) ` +
-      `sobre um custo total de ${fmtBRL(resumo.custo_total)}. O valor de mercado atual é ${fmtBRL(resumo.valor_total)}.`,
-  };
-}
-
-async function obterExposicaoPorSetor() {
-  const dist = await api.getDistribution();
-  const classes = dist.classe.map((c) => `${fmtNum(c.pct, 1)}% ${c.nome}`).join(', ');
-  const setores = dist.setor
-    .slice(0, 3)
-    .map((s) => `${s.nome} (${fmtNum(s.pct, 1)}%)`)
-    .join(', ');
-  return {
-    ferramentas: ['obterExposicaoPorSetor()'],
-    texto: `Por classe de ativo, a carteira está em ${classes}. Os setores com maior concentração são ${setores}.`,
-  };
-}
-
-async function compararComBenchmark() {
-  const resumo = await api.getPortfolioSummary();
-  const diffIbov = resumo.resultado_pct - resumo.benchmarks.ibovespa;
-  const diffCdi = resumo.resultado_pct - resumo.benchmarks.cdi;
-  return {
-    ferramentas: ['compararComBenchmark(benchmark=IBOV)', 'compararComBenchmark(benchmark=CDI)'],
-    texto:
-      `Desde o início da série acompanhada, a carteira acumula ${fmtPct(resumo.resultado_pct)} contra ` +
-      `${fmtPct(resumo.benchmarks.ibovespa)} do Ibovespa e ${fmtPct(resumo.benchmarks.cdi)} do CDI — ` +
-      `diferença de ${fmtPct(diffIbov)} em relação ao Ibovespa e ${fmtPct(diffCdi)} em relação ao CDI.`,
-  };
-}
-
-async function listarSinaisAtivos() {
-  const sinais = await api.getSignals({ apenasAtivos: true });
-  if (sinais.length === 0) {
-    return { ferramentas: ['listarSinaisAtivos()'], texto: 'Não há sinais ativos no momento entre os ativos monitorados.' };
-  }
-  const recentes = sinais
-    .slice(0, 3)
-    .map((s) => `${s.ticker} — ${s.regra.nome} (há ${Math.max(1, Math.round((Date.now() - new Date(s.data_ativacao).getTime()) / 3_600_000))} h)`)
-    .join('; ');
-  return {
-    ferramentas: ['listarSinaisAtivos()'],
-    texto: `Há ${sinais.length} sinal(is) ativo(s). Os mais recentes: ${recentes}. Cada um traz o histórico de ocorrências dos últimos 24 meses na tela do ativo.`,
-  };
-}
-
-async function obterAtivoMaisRentavel({ pior = false } = {}) {
-  const pos = await api.getPositions();
-  if (pos.length === 0) {
-    return { ferramentas: ['obterAtivoMaisRentavel()'], texto: 'Não há posições na carteira para calcular rentabilidade.' };
-  }
-  const ordenado = [...pos].sort((a, b) => (pior ? a.resultado_pct - b.resultado_pct : b.resultado_pct - a.resultado_pct));
-  const top = ordenado[0];
-  const proximos = ordenado
-    .slice(1, 3)
-    .map((p) => `${p.ticker} (${fmtPct(p.resultado_pct)})`)
-    .join(', ');
-  const rotulo = pior ? 'menor retorno percentual' : 'maior retorno percentual';
-  return {
-    ferramentas: ['obterAtivoMaisRentavel()'],
-    texto:
-      `A posição com ${rotulo} sobre o preço médio é ${top.ticker}, em ${fmtPct(top.resultado_pct)} ` +
-      `(${fmtBRL(top.resultado, top.moeda)} sobre preço médio de ${fmtBRL(top.preco_medio, top.moeda)}).` +
-      (proximos ? ` Em seguida: ${proximos}.` : ''),
-  };
-}
-
-async function listarOperacoes({ tipo, ticker } = {}) {
-  let ops = await api.getOperations();
-  if (tipo) ops = ops.filter((o) => o.tipo === tipo);
-  if (ticker) ops = ops.filter((o) => o.ticker === ticker);
-  if (ops.length === 0) {
-    return { ferramentas: ['listarOperacoes()'], texto: 'Nenhuma operação encontrada para esse filtro.' };
-  }
-  const compras = ops.filter((o) => o.tipo === 'COMPRA').length;
-  const vendas = ops.filter((o) => o.tipo === 'VENDA').length;
-  const recentes = ops
-    .slice(0, 3)
-    .map((o) => `${o.tipo === 'COMPRA' ? 'compra' : 'venda'} de ${o.quantidade} ${o.ticker} a ${fmtBRL(o.preco_unitario, byTicker(o.ticker)?.moeda)} em ${fmtDate(o.data)}`)
-    .join('; ');
-  const filtroLabel = [ticker, tipo ? (tipo === 'COMPRA' ? 'compras' : 'vendas') : null].filter(Boolean).join(' — ');
-  return {
-    ferramentas: [`listarOperacoes(${filtroLabel || 'todas'})`],
-    texto: `${ops.length} operação(ões) registrada(s)${filtroLabel ? ` (filtro: ${filtroLabel})` : ''}: ${compras} compra(s) e ${vendas} venda(s). As mais recentes: ${recentes}.`,
-  };
-}
-
-const CHAT_FUNCTIONS = {
-  obterRentabilidadeCarteira,
-  obterExposicaoPorSetor,
-  compararComBenchmark,
-  listarSinaisAtivos,
-  obterAtivoMaisRentavel,
-  listarOperacoes,
-};
-
-/** Roteador de intenção por palavra-chave (sem LLM) — escolhe a função e extrai
- * os argumentos simples (ticker/tipo) reconhecíveis na pergunta. */
-function interpretarPergunta(pergunta) {
-  const p = pergunta.toLowerCase();
-  const tickerDetectado = ASSETS.find((a) => p.includes(a.ticker.toLowerCase()))?.ticker;
-
-  if (/pior|prejuízo|prejuizo|queda|perdeu|caiu mais/.test(p)) return { fn: 'obterAtivoMaisRentavel', args: { pior: true } };
-  if (/rentáv|rentav|melhor ativo|mais subiu|maior alta|maior retorno/.test(p)) return { fn: 'obterAtivoMaisRentavel', args: {} };
-  if (/exposiç|exposic|distribuiç|distribuic|concentr|\bsetor\b/.test(p)) return { fn: 'obterExposicaoPorSetor', args: {} };
-  if (/\bcdi\b|ibovespa|\bibov\b|benchmark|compar/.test(p)) return { fn: 'compararComBenchmark', args: {} };
-  if (/venda|vendi/.test(p)) return { fn: 'listarOperacoes', args: { tipo: 'VENDA', ticker: tickerDetectado } };
-  if (/compra|comprei/.test(p)) return { fn: 'listarOperacoes', args: { tipo: 'COMPRA', ticker: tickerDetectado } };
-  if (/operaç|operac|histórico|historico/.test(p)) return { fn: 'listarOperacoes', args: { ticker: tickerDetectado } };
-  if (/sinal|sinais|alerta/.test(p)) return { fn: 'listarSinaisAtivos', args: {} };
-  if (/rentabilidade|resultado da carteira|rendeu|lucro|ganho|patrimôni|patrimoni/.test(p)) return { fn: 'obterRentabilidadeCarteira', args: {} };
-  return null;
 }

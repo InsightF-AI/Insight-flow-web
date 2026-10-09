@@ -76,11 +76,8 @@ export function generateCandles(ticker, days = 420) {
   }));
 }
 
+// a brapi no plano gratuito só entrega histórico de 1M e 3M — os demais períodos falham no backend.
 export const PERIODS = [
-  { id: '1d', label: '1D', candles: 1 },
-  { id: '1s', label: '1S', candles: 5 },
   { id: '1m', label: '1M', candles: 22 },
   { id: '3m', label: '3M', candles: 66 },
-  { id: '1a', label: '1A', candles: 252 },
-  { id: '5a', label: '5A', candles: 420 },
 ];

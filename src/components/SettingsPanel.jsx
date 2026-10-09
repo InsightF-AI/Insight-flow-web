@@ -19,6 +19,7 @@ import { useAuthStore, useUiStore } from '../store/index.js';
 import { useWatchlist, useWatchlistMutations, usePositions, useOperations, useSessions, useAccountMutations } from '../hooks/queries.js';
 import { Card, Pill, SectionTitle, Skeleton, Empty, ErrorState } from './ui.jsx';
 import { fmtDate, sinceNow } from '../lib/format.js';
+import { ativarWebPush, desativarWebPush } from '../lib/webPush.js';
 
 function Toggle({ label, hint, value, onChange }) {
   return (
@@ -279,6 +280,7 @@ export default function SettingsPanel() {
   const { data: posicoes } = usePositions();
   const { data: operacoes } = useOperations();
   const { toggle } = useWatchlistMutations();
+  const [erroWebPush, setErroWebPush] = useState(null);
   const [permissaoNegada, setPermissaoNegada] = useState(
     typeof Notification !== 'undefined' && Notification.permission === 'denied',
   );
@@ -286,12 +288,26 @@ export default function SettingsPanel() {
   /** RF-18/UC-05 — a primeira vez que o usuário liga o web push, o navegador precisa
    * conceder permissão de notificação; se negar, o toggle não liga e um aviso explica. */
   const alternarWebPush = async (ligar) => {
-    if (!ligar) return setFlag('notificacoesPush', false);
+    setErroWebPush(null);
+    if (!ligar) {
+      setFlag('notificacoesPush', false);
+      setFlag('webPushAtivo', false);
+      return desativarWebPush();
+    }
     if (typeof Notification === 'undefined') return setPermissaoNegada(true);
-    if (Notification.permission === 'granted') return setFlag('notificacoesPush', true);
-    const resultado = await Notification.requestPermission();
+    const resultado = Notification.permission === 'granted' ? 'granted' : await Notification.requestPermission();
     setPermissaoNegada(resultado !== 'granted');
     setFlag('notificacoesPush', resultado === 'granted');
+    if (resultado !== 'granted') return undefined;
+    try {
+      await ativarWebPush();
+      setFlag('webPushAtivo', true);
+    } catch (err) {
+      // sem inscrição no servidor, ainda há o toast/notificação via WebSocket com o app aberto.
+      setFlag('webPushAtivo', false);
+      setErroWebPush(err.message);
+    }
+    return undefined;
   };
 
   return (
@@ -303,7 +319,7 @@ export default function SettingsPanel() {
       <Card title={<SectionTitle icon={Bell}>Notificações</SectionTitle>}>
         <Toggle
           label="Web push"
-          hint="Alertas de sinal técnico entregues no navegador. Pede permissão do navegador na primeira vez."
+          hint="Alertas e sinais entregues pelo servidor no navegador, mesmo com a aba fechada. Pede permissão na primeira vez."
           value={notificacoesPush}
           onChange={alternarWebPush}
         />
@@ -312,6 +328,9 @@ export default function SettingsPanel() {
             Permissão de notificação negada pelo navegador. Habilite manualmente nas configurações do site para
             receber web push.
           </p>
+        )}
+        {erroWebPush && (
+          <p className="-mt-2 pb-3.5 text-xs text-down">Não foi possível ativar o web push no servidor: {erroWebPush}</p>
         )}
         <Toggle
           label="E-mail"

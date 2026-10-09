@@ -1,39 +1,38 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, Check, ChevronDown, X } from 'lucide-react';
-import { ASSETS, byTicker } from '../api/mock/assets.js';
-import { usePositions, useCreateOperation } from '../hooks/queries.js';
+import { usePositions, useCreateOperation, useWatchlist } from '../hooks/queries.js';
 import { fmtBRL, fmtNum } from '../lib/format.js';
 
 const hoje = () => new Date().toISOString().slice(0, 10);
 const rotulo = (a) => `${a.ticker} — ${a.nome}`;
-const vazio = (ticker) => {
-  const asset = byTicker(ticker || 'PETR4') ?? ASSETS[0];
+const vazio = (ticker, catalogo) => {
+  const asset = catalogo.find((a) => a.ticker === ticker) ?? catalogo[0];
   return {
     tipo: 'COMPRA',
-    ticker: asset.ticker,
+    ticker: asset?.ticker ?? '',
     quantidade: '',
-    preco_unitario: String(asset.base),
+    preco_unitario: asset?.base ? String(asset.base) : '',
     data: hoje(),
   };
 };
 
-/** Combobox de busca sobre o catálogo de ativos (sem chamada de rede — filtro
- * local em `ASSETS`, o mesmo catálogo usado no restante do app). */
-function AtivoCombobox({ ticker, onSelect }) {
-  const asset = byTicker(ticker);
+/** Combobox de busca sobre os ativos da watchlist — é de lá que vem o ativo_id que a API de
+ * operações exige (o preço atual entra como sugestão de preço unitário). */
+function AtivoCombobox({ ticker, onSelect, catalogo }) {
+  const asset = catalogo.find((a) => a.ticker === ticker);
   const [busca, setBusca] = useState(asset ? rotulo(asset) : '');
   const [aberto, setAberto] = useState(false);
 
   useEffect(() => {
-    const a = byTicker(ticker);
+    const a = catalogo.find((x) => x.ticker === ticker);
     setBusca(a ? rotulo(a) : '');
-  }, [ticker]);
+  }, [ticker, catalogo]);
 
   const termo = busca.trim().toLowerCase();
   const opcoes = (
     termo && termo !== (asset ? rotulo(asset).toLowerCase() : '')
-      ? ASSETS.filter((a) => a.ticker.toLowerCase().includes(termo) || a.nome.toLowerCase().includes(termo))
-      : ASSETS
+      ? catalogo.filter((a) => a.ticker.toLowerCase().includes(termo) || a.nome.toLowerCase().includes(termo))
+      : catalogo
   ).slice(0, 8);
 
   const selecionar = (a) => {
@@ -63,7 +62,7 @@ function AtivoCombobox({ ticker, onSelect }) {
       {aberto && (
         <ul className="absolute z-10 mt-1 max-h-56 w-full overflow-y-auto rounded-sm border border-border-main bg-surface py-1 shadow-lg">
           {opcoes.length === 0 ? (
-            <li className="px-3 py-2 text-xs text-fg-3">Nenhum ativo encontrado.</li>
+            <li className="px-3 py-2 text-xs text-fg-3">Nenhum ativo encontrado. Adicione-o à watchlist pela busca.</li>
           ) : (
             opcoes.map((a) => (
               <li key={a.ticker}>
@@ -90,7 +89,17 @@ function AtivoCombobox({ ticker, onSelect }) {
 /** UC-04 — registrar operação fictícia. `initialTicker` pré-seleciona o ativo
  * quando aberto a partir da tela de detalhe (atalho "Nova operação"). */
 export default function OperationModal({ open, onClose, initialTicker }) {
-  const [form, setForm] = useState(() => vazio(initialTicker));
+  const { data: watchlist } = useWatchlist();
+  const catalogo = useMemo(() => {
+    const itens = (watchlist ?? []).map((w) => ({ ticker: w.ticker, nome: w.nome, tipo: w.tipo, base: w.cotacao?.preco }));
+    // aberto pela tela de um ativo fora da watchlist: ele entra na watchlist ao registrar a operação.
+    if (initialTicker && !itens.some((a) => a.ticker === initialTicker)) {
+      itens.unshift({ ticker: initialTicker, nome: 'será adicionado à watchlist', tipo: 'ACAO' });
+    }
+    return itens;
+  }, [watchlist, initialTicker]);
+  const catalogoCarregado = watchlist != null;
+  const [form, setForm] = useState(() => vazio(initialTicker, catalogo));
   const [erros, setErros] = useState({});
   const [ok, setOk] = useState(false);
   const { data: positions } = usePositions();
@@ -100,21 +109,23 @@ export default function OperationModal({ open, onClose, initialTicker }) {
     if (erros[k]) setErros({ ...erros, [k]: undefined });
   };
   const total = (Number(form.quantidade) || 0) * (Number(form.preco_unitario) || 0);
-  const asset = byTicker(form.ticker);
+  const asset = catalogo.find((a) => a.ticker === form.ticker);
   const posicao = (positions ?? []).find((p) => p.ticker === form.ticker);
   const disponivel = posicao?.quantidade ?? 0;
 
   useEffect(() => {
     if (open) {
-      setForm(vazio(initialTicker));
+      setForm(vazio(initialTicker, catalogo));
       setErros({});
+      mut.reset();
     }
-  }, [open, initialTicker]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, initialTicker, catalogoCarregado]);
 
   if (!open) return null;
 
   const selecionarAtivo = (ticker) => {
-    const a = byTicker(ticker);
+    const a = catalogo.find((x) => x.ticker === ticker);
     setForm({ ...form, ticker, preco_unitario: String(a?.base ?? form.preco_unitario) });
     setErros({ ...erros, ticker: undefined, preco_unitario: undefined });
   };
@@ -123,6 +134,7 @@ export default function OperationModal({ open, onClose, initialTicker }) {
     const e = {};
     const qtd = Number(form.quantidade);
     const preco = Number(form.preco_unitario);
+    if (!form.ticker) e.ticker = 'Selecione um ativo da watchlist.';
     if (!form.quantidade || qtd <= 0) e.quantidade = 'Informe uma quantidade maior que zero.';
     else if (form.tipo === 'VENDA' && qtd > disponivel) {
       e.quantidade = `Você tem ${fmtNum(disponivel, asset?.tipo === 'CRIPTO' ? 4 : 0)} em carteira.`;
@@ -149,7 +161,7 @@ export default function OperationModal({ open, onClose, initialTicker }) {
           setTimeout(() => {
             setOk(false);
             onClose();
-            setForm(vazio(initialTicker));
+            setForm(vazio(initialTicker, catalogo));
           }, 1400);
         },
       },
@@ -202,7 +214,8 @@ export default function OperationModal({ open, onClose, initialTicker }) {
               ))}
             </div>
 
-            <AtivoCombobox ticker={form.ticker} onSelect={selecionarAtivo} />
+            <AtivoCombobox ticker={form.ticker} onSelect={selecionarAtivo} catalogo={catalogo} />
+            {erros.ticker && <p className="mt-1.5 text-xs text-down">{erros.ticker}</p>}
             {form.tipo === 'VENDA' && asset && (
               <p className="-mt-2 text-xs text-fg-3">
                 Disponível em carteira: {fmtNum(disponivel, asset.tipo === 'CRIPTO' ? 4 : 0)}
@@ -255,6 +268,8 @@ export default function OperationModal({ open, onClose, initialTicker }) {
               <span className="text-xs uppercase tracking-wider text-fg-3">Valor total</span>
               <span className="num text-lg font-bold text-fg-0">{fmtBRL(total)}</span>
             </div>
+
+            {mut.isError && <p className="text-xs text-down">{mut.error.message}</p>}
 
             <div className="flex justify-end gap-2">
               <button type="button" className="btn-ghost" onClick={onClose}>

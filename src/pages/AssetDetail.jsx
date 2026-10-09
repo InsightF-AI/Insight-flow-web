@@ -21,7 +21,9 @@ const OVERLAYS = [
 
 export default function AssetDetail() {
   const { ticker } = useParams();
-  const { periodo, setPeriodo, overlays, toggleOverlay } = useUiStore();
+  const { periodo: periodoSalvo, setPeriodo, overlays, toggleOverlay } = useUiStore();
+  // período persistido de uma versão anterior (ex: '1a') não existe mais — cai pro 1M.
+  const periodo = PERIODS.some((p) => p.id === periodoSalvo) ? periodoSalvo : '1m';
   const { data: asset } = useAsset(ticker);
   const { data: hist, isLoading: loadingHist, isError: erroHist, refetch: refazerHist } = useHistory(ticker, periodo);
   const { data: snapshot, isError: erroSnapshot, refetch: refazerSnapshot } = useIndicators(ticker);
@@ -32,7 +34,14 @@ export default function AssetDetail() {
     refetch: refazerSignals,
   } = useSignals({ ticker, apenasAtivos: false });
   const { data: score, isError: erroScore, refetch: refazerScore } = useScore(ticker);
-  const { data: analysis, isLoading: loadingAI, isError: erroAI } = useAnalysis(ticker);
+  const [pedirAnalise, setPedirAnalise] = useState(false);
+  const {
+    data: analysis,
+    isFetching: loadingAI,
+    isError: erroAI,
+    error: erroAIDetalhe,
+    refetch: refazerAI,
+  } = useAnalysis(ticker, pedirAnalise);
   const { data: news, isError: erroNews, refetch: refazerNews } = useNews(ticker);
   const mobile = useMediaQuery('(max-width: 639px)');
   const { data: watchlist } = useWatchlist();
@@ -276,24 +285,38 @@ export default function AssetDetail() {
           <Card title="Análise por IA" action={<Sparkles size={15} className="text-purple" />}>
             {loadingAI ? (
               <div className="grid gap-2">
+                <p className="flex items-center gap-2 text-xs text-fg-2">
+                  <Sparkles size={13} className="animate-pulse text-purple" />
+                  Gerando análise com IA… pode levar até 1 minuto.
+                </p>
                 <Skeleton /> <Skeleton /> <Skeleton /> <Skeleton className="h-4 w-1/2" />
               </div>
             ) : erroAI ? (
-              <div className="flex items-start gap-2.5 rounded-sm border border-border-soft bg-elevated px-3 py-2.5">
-                <CloudOff size={16} className="mt-0.5 shrink-0 text-fg-3" />
-                <p className="text-xs text-fg-3">
-                  Análise por IA indisponível no momento. Os indicadores calculados abaixo continuam disponíveis
-                  normalmente.
-                </p>
+              <div className="grid gap-3">
+                <div className="flex items-start gap-2.5 rounded-sm border border-border-soft bg-elevated px-3 py-2.5">
+                  <CloudOff size={16} className="mt-0.5 shrink-0 text-fg-3" />
+                  <p className="text-xs text-fg-3">
+                    Análise por IA indisponível no momento ({erroAIDetalhe?.message}). Os indicadores calculados abaixo
+                    continuam disponíveis normalmente.
+                  </p>
+                </div>
+                <button className="btn-ghost" onClick={() => refazerAI()}>
+                  Tentar novamente
+                </button>
               </div>
-            ) : (
+            ) : analysis ? (
               <>
-                <p className="text-fg-1">{analysis?.texto}</p>
+                <p className="whitespace-pre-line text-fg-1">{analysis.texto}</p>
                 <p className="mt-3 text-xs text-fg-3">
-                  provedor {analysis?.provedor} · modelo {analysis?.modelo} · prompt {analysis?.prompt_versao}
+                  provedor {analysis.provedor} · modelo {analysis.modelo}
+                  {analysis.em_cache ? ' · em cache' : ''}
                 </p>
                 <Disclaimer className="mt-3" />
               </>
+            ) : (
+              <button className="btn-primary w-full" onClick={() => setPedirAnalise(true)}>
+                <Sparkles size={15} /> Gerar análise por IA
+              </button>
             )}
           </Card>
 

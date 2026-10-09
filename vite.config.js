@@ -16,6 +16,8 @@ export default defineConfig(({ mode }) => {
         '/api': {
           target: backendUrl,
           changeOrigin: true,
+          // WebSocket de notificações (/api/v1/notificacoes/ws) passa pelo mesmo proxy.
+          ws: true,
         },
       },
     },
