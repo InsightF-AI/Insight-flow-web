@@ -276,7 +276,7 @@ export default function Dashboard() {
   const { data: signals, isError: erroSignals, refetch: refazerSignals } = useSignals({ apenasAtivos: true });
   const { data: portfolio } = usePortfolio();
   const { data: positions, isError: erroPositions, refetch: refazerPositions } = usePositions();
-  const { data: resumo, isError: erroResumo } = useDailySummary();
+  const { data: resumo, isLoading: carregandoResumo, isError: erroResumo } = useDailySummary();
   const { remove, toggle } = useWatchlistMutations();
 
   return (
@@ -440,10 +440,15 @@ export default function Dashboard() {
                   disponíveis normalmente.
                 </p>
               </div>
-            ) : (
+            ) : carregandoResumo ? (
               <div className="grid gap-2">
                 <Skeleton /> <Skeleton /> <Skeleton className="h-4 w-2/3" />
               </div>
+            ) : (
+              <p className="text-xs text-fg-3">
+                Nenhum resumo gerado ainda. O servidor gera o resumo diário da carteira por IA ao fim do pregão
+                (18h30) e ele aparece aqui.
+              </p>
             )}
           </Card>
 

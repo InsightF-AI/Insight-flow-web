@@ -13,7 +13,13 @@ const MENSAGEM_INICIAL = {
   ferramentas: [],
 };
 
-/** UC-06 — chat sobre a carteira, com function calling simulado. */
+/** Mensagens anteriores no formato do POST /chat — sem a saudação fixa e sem avisos de erro. */
+const historicoParaApi = (msgs) =>
+  msgs
+    .filter((m) => m !== MENSAGEM_INICIAL && !m.erro)
+    .map((m) => ({ papel: m.role === 'user' ? 'usuario' : 'assistente', texto: m.texto }));
+
+/** UC-06 — chat sobre a carteira com a IA do backend (POST /chat). */
 export default function Chat() {
   const usuario = useAuthStore((s) => s.usuario);
   const [msgs, setMsgs] = useState([MENSAGEM_INICIAL]);
@@ -28,8 +34,10 @@ export default function Chat() {
   };
 
   const mut = useMutation({
-    mutationFn: (pergunta) => api.askAI(pergunta),
+    mutationFn: ({ pergunta, historico }) => api.askAI(pergunta, historico),
     onSuccess: (r) => setMsgs((m) => [...m, { role: 'ia', texto: r.texto, ferramentas: r.ferramentas }]),
+    onError: (err) =>
+      setMsgs((m) => [...m, { role: 'ia', erro: true, texto: `Não consegui responder agora (${err.message}). Tente novamente.` }]),
   });
 
   useEffect(() => {
@@ -39,9 +47,10 @@ export default function Chat() {
   const enviar = (pergunta) => {
     const q = (pergunta ?? texto).trim();
     if (!q || mut.isPending) return;
+    const historico = historicoParaApi(msgs);
     setMsgs((m) => [...m, { role: 'user', texto: q }]);
     setTexto('');
-    mut.mutate(q);
+    mut.mutate({ pergunta: q, historico });
   };
 
   return (
@@ -49,7 +58,7 @@ export default function Chat() {
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-2xl font-bold">Chat IA</h2>
-          <p className="mt-1">Respostas mockadas nesta versão. Nenhuma chamada é feita a provedor externo.</p>
+          <p className="mt-1">Respostas geradas pela IA do backend a partir dos dados da sua carteira. Pode levar até 1 minuto.</p>
         </div>
         {msgs.length > 1 && (
           <button
@@ -118,7 +127,7 @@ export default function Chat() {
                 <Sparkles size={14} className="animate-pulse text-purple" />
               </div>
               <div className="rounded-xl bg-elevated px-3.5 py-2.5 text-sm text-fg-3">
-                Consultando dados da carteira…
+                Consultando dados da carteira… (pode levar até 1 minuto)
               </div>
             </li>
           )}

@@ -34,13 +34,15 @@ function aplicarTema(tema) {
 export const useUiStore = create(
   persist(
     (set, get) => ({
-      periodo: '1a',
+      periodo: '1m',
       overlays: { sma20: true, sma50: true, sma200: false, bollinger: false },
       searchOpen: false,
       settingsOpen: false,
       sidebarOpen: true,
       mobileNavOpen: false,
       notificacoesPush: true,
+      // inscrição de web push registrada no backend (o service worker passa a mostrar a notificação nativa).
+      webPushAtivo: false,
       notificacoesEmail: false,
       notificacoesMobile: true,
       notificacoesDesktop: true,
@@ -96,12 +98,14 @@ export const useAuthStore = create(
   persist(
     (set) => ({
       token: null,
+      refreshToken: null,
       usuario: null,
-      signIn: ({ token, usuario }) => {
-        set({ token, usuario });
+      signIn: ({ token, refreshToken, usuario }) => {
+        set({ token, refreshToken, usuario });
         useUiStore.getState().aplicarPrefsUsuario(lerPrefsUsuario(usuario?.email));
       },
-      signOut: () => set({ token: null, usuario: null }),
+      setTokens: ({ token, refreshToken }) => set({ token, refreshToken }),
+      signOut: () => set({ token: null, refreshToken: null, usuario: null }),
       updateUsuario: (patch) => set((s) => ({ usuario: { ...s.usuario, ...patch } })),
     }),
     {

@@ -1,15 +1,15 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { BellRing, Check, Copy, ListChecks, Pencil, Plus, SlidersHorizontal, Trash2, X } from 'lucide-react';
-import { ASSETS, byTicker } from '../api/mock/assets.js';
-import { METRICAS, OPERADORES, CANAIS, FREQUENCIAS, metricaOf, operadorOf } from '../api/mock/userAlerts.js';
-import { useUserRules, useUserTriggers, useUserRuleMutations, useMarkTriggersSeen } from '../hooks/queries.js';
+import { BellRing, Copy, ListChecks, Pencil, Plus, SlidersHorizontal, Trash2, X } from 'lucide-react';
+import { OPERADORES, operadorOf } from '../api/mock/userAlerts.js';
+import { useUserRules, useUserTriggers, useUserRuleMutations, useMarkTriggersSeen, useWatchlist } from '../hooks/queries.js';
 import { Card, Pill, Skeleton, Empty, ErrorState, SectionTitle } from '../components/ui.jsx';
 import { fmtBRL, fmtNum, sinceNow } from '../lib/format.js';
 
-const VAZIO = { ticker: 'BTC', metrica: 'PRECO', operador: 'GTE', valor: '', canais: ['PUSH'], frequencia: 'UMA_VEZ', nota: '' };
+const VAZIO = { ticker: '', operador: 'GTE', valor: '' };
 
-/** Alertas definidos pelo usuário: condição sobre indicadores + canais de entrega. */
+/** Alertas de preço do usuário (POST /alertas). O backend avalia a condição a cada ciclo do
+ * scheduler e entrega o disparo em tempo real pelo WebSocket de notificações. */
 export default function MyAlerts() {
   const [form, setForm] = useState(VAZIO);
   const [erros, setErros] = useState({});
@@ -18,6 +18,10 @@ export default function MyAlerts() {
   const { data: disparos, isLoading: carregandoDisparos, isError: erroDisparos, refetch: refazerDisparos } = useUserTriggers();
   const { create, update, toggle, remove } = useUserRuleMutations();
   const marcarVistos = useMarkTriggersSeen();
+  // a API só aceita alerta para ativo já conhecido — a lista vem da watchlist.
+  const { data: watchlist } = useWatchlist();
+  const ticker = form.ticker || watchlist?.[0]?.ticker || '';
+  const ativoSelecionado = (watchlist ?? []).find((w) => w.ticker === ticker);
 
   useEffect(() => {
     if ((disparos ?? []).some((d) => !d.visto)) marcarVistos.mutate();
@@ -27,18 +31,11 @@ export default function MyAlerts() {
     setForm({ ...form, [k]: e.target.value });
     if (erros[k]) setErros({ ...erros, [k]: undefined });
   };
-  const metrica = metricaOf(form.metrica);
-  const ativoSelecionado = byTicker(form.ticker);
-
-  const toggleCanal = (id) => {
-    setForm({ ...form, canais: form.canais.includes(id) ? form.canais.filter((c) => c !== id) : [...form.canais, id] });
-    if (erros.canais) setErros({ ...erros, canais: undefined });
-  };
 
   const validar = () => {
     const e = {};
+    if (!ticker) e.ticker = 'Adicione um ativo à watchlist antes de criar um alerta.';
     if (!form.valor || !(Number(form.valor) > 0)) e.valor = 'Informe um valor-alvo maior que zero.';
-    if (form.canais.length === 0) e.canais = 'Selecione ao menos um canal de entrega.';
     return e;
   };
 
@@ -53,23 +50,15 @@ export default function MyAlerts() {
     const validacao = validar();
     setErros(validacao);
     if (Object.keys(validacao).length > 0) return;
-    const payload = { ...form, valor: Number(form.valor) };
+    const payload = { ...form, ticker, valor: Number(form.valor) };
     if (editandoId) {
       update.mutate({ id: editandoId, patch: payload }, { onSuccess: cancelarEdicao });
     } else {
-      create.mutate(payload, { onSuccess: () => setForm({ ...VAZIO, ticker: form.ticker }) });
+      create.mutate(payload, { onSuccess: () => setForm({ ...VAZIO, ticker }) });
     }
   };
 
-  const carregarForm = (r) => ({
-    ticker: r.ticker,
-    metrica: r.metrica,
-    operador: r.operador,
-    valor: String(r.valor),
-    canais: [...r.canais],
-    frequencia: r.frequencia,
-    nota: r.nota ?? '',
-  });
+  const carregarForm = (r) => ({ ticker: r.ticker, operador: r.operador, valor: String(r.valor) });
 
   const duplicar = (r) => {
     setEditandoId(null);
@@ -92,8 +81,8 @@ export default function MyAlerts() {
       <header>
         <h2 className="text-2xl font-bold">Meus alertas</h2>
         <p className="mt-1">
-          Defina a condição por ativo e os canais de entrega. {ativos.length} regras ativas, {atingidas.length} com a
-          condição satisfeita agora.
+          Defina um preço-alvo por ativo — o aviso chega em tempo real quando o preço cruzar o alvo.{' '}
+          {ativos.length} regras ativas, {atingidas.length} com a condição satisfeita agora.
         </p>
       </header>
 
@@ -102,30 +91,25 @@ export default function MyAlerts() {
           <form className="grid gap-4" onSubmit={submit}>
             <div>
               <label className="label" htmlFor="ua-ativo">Ativo</label>
-              <select id="ua-ativo" className="input" value={form.ticker} onChange={set('ticker')}>
-                {ASSETS.map((a) => (
+              <select id="ua-ativo" className="input" value={ticker} onChange={set('ticker')} disabled={editandoId != null}>
+                {(watchlist ?? []).map((a) => (
                   <option key={a.ticker} value={a.ticker}>
                     {a.ticker} — {a.nome}
                   </option>
                 ))}
               </select>
-            </div>
-
-            <div>
-              <label className="label" htmlFor="ua-metrica">Indicador</label>
-              <select id="ua-metrica" className="input" value={form.metrica} onChange={set('metrica')}>
-                {METRICAS.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.label}
-                  </option>
-                ))}
-              </select>
-              <p className="mt-1.5 text-xs text-fg-3">{metrica.dica}</p>
+              {ativoSelecionado?.cotacao && (
+                <p className="mt-1.5 text-xs text-fg-3">
+                  Preço atual{' '}
+                  <span className="num font-semibold text-fg-1">{fmtBRL(ativoSelecionado.cotacao.preco, ativoSelecionado.moeda)}</span>
+                </p>
+              )}
+              {erros.ticker && <p className="mt-1.5 text-xs text-down">{erros.ticker}</p>}
             </div>
 
             <div className="grid grid-cols-[1fr_120px] gap-3">
               <div>
-                <label className="label" htmlFor="ua-op">Condição</label>
+                <label className="label" htmlFor="ua-op">Quando o preço</label>
                 <select id="ua-op" className="input" value={form.operador} onChange={set('operador')}>
                   {OPERADORES.map((o) => (
                     <option key={o.id} value={o.id}>
@@ -136,7 +120,7 @@ export default function MyAlerts() {
               </div>
               <div>
                 <label className="label" htmlFor="ua-valor">
-                  Valor {metrica.unidade === 'moeda' && ativoSelecionado ? `(${ativoSelecionado.moeda})` : ''}
+                  Valor {ativoSelecionado ? `(${ativoSelecionado.moeda})` : ''}
                 </label>
                 <input
                   id="ua-valor"
@@ -151,53 +135,13 @@ export default function MyAlerts() {
             </div>
             {erros.valor && <p className="-mt-2 text-xs text-down">{erros.valor}</p>}
 
-            <div>
-              <span className="label">Canais de entrega</span>
-              <div className="flex flex-wrap gap-2">
-                {CANAIS.map((c) => {
-                  const on = form.canais.includes(c.id);
-                  return (
-                    <button
-                      key={c.id}
-                      type="button"
-                      onClick={() => toggleCanal(c.id)}
-                      className={`rounded-full border px-3 py-1.5 text-xs font-semibold ${
-                        on ? 'border-accent text-accent' : 'border-border-main text-fg-3'
-                      }`}
-                    >
-                      {on && <Check size={12} className="mr-1 inline" />}
-                      {c.label}
-                    </button>
-                  );
-                })}
-              </div>
-              {erros.canais && <p className="mt-1.5 text-xs text-down">{erros.canais}</p>}
-            </div>
-
-            <div>
-              <label className="label" htmlFor="ua-freq">Frequência</label>
-              <select id="ua-freq" className="input" value={form.frequencia} onChange={set('frequencia')}>
-                {FREQUENCIAS.map((f) => (
-                  <option key={f.id} value={f.id}>
-                    {f.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="label" htmlFor="ua-nota">Nota (opcional)</label>
-              <input id="ua-nota" className="input" placeholder="Ex: zona de recompra" value={form.nota} onChange={set('nota')} />
-            </div>
-
             <div className="rounded-sm border border-border-soft bg-elevated px-3 py-2.5 text-xs text-fg-2">
-              Notificar quando <span className="num font-semibold text-fg-0">{form.ticker}</span> tiver{' '}
-              {metrica.label.toLowerCase()} {operadorOf(form.operador).simbolo}{' '}
+              Notificar quando <span className="num font-semibold text-fg-0">{ticker || '—'}</span> tiver preço{' '}
+              {operadorOf(form.operador).simbolo}{' '}
               <span className="num font-semibold text-fg-0">
-                {metrica.unidade === 'moeda' && ativoSelecionado ? fmtBRL(Number(form.valor) || 0, ativoSelecionado.moeda) : form.valor || '—'}
+                {ativoSelecionado ? fmtBRL(Number(form.valor) || 0, ativoSelecionado.moeda) : form.valor || '—'}
               </span>
-              {metrica.unidade && metrica.unidade !== 'moeda' ? metrica.unidade : ''} em{' '}
-              {form.canais.length} canal(is).
+              . Verificado pelo servidor a cada ciclo do agendador.
               {editandoId && (
                 <p className="mt-1.5 text-fg-3">
                   Ao salvar, a regra é rearmada — mesmo que a condição já esteja satisfeita, não dispara na hora.
@@ -306,8 +250,7 @@ export default function MyAlerts() {
                       <span>
                         Alvo <span className="num font-semibold text-fg-0">{r.avaliacao.alvo_label}</span>
                       </span>
-                      <span>{FREQUENCIAS.find((f) => f.id === r.frequencia)?.label}</span>
-                      <span>{r.canais.map((c) => CANAIS.find((x) => x.id === c)?.label).join(' · ')}</span>
+                      {r.disparado_em && <span>Disparado há {sinceNow(r.disparado_em)}</span>}
                     </div>
 
                     <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted">
@@ -320,7 +263,6 @@ export default function MyAlerts() {
                       />
                     </div>
 
-                    {r.nota && <p className="mt-2 text-xs text-fg-3">{r.nota}</p>}
                   </li>
                 ))}
               </ul>
@@ -351,7 +293,7 @@ export default function MyAlerts() {
                       <div className="mt-1.5 flex flex-wrap gap-1.5">
                         {d.canais.map((c) => {
                           const status = d.entrega?.[c] ?? 'simulado';
-                          const label = CANAIS.find((x) => x.id === c)?.label ?? c;
+                          const label = 'Tempo real';
                           const tone = status === 'entregue' ? 'green' : status === 'indisponivel' ? 'red' : 'slate';
                           const statusLabel = status === 'entregue' ? 'entregue' : status === 'indisponivel' ? 'indisponível' : 'simulado';
                           return (

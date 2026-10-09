@@ -6,7 +6,6 @@ import { useMediaQuery } from '../hooks/useMediaQuery.js';
 import { Card, Kpi, Pill, Skeleton, Empty, ErrorState, SectionTitle } from '../components/ui.jsx';
 import { BenchmarkChart, DonutChart } from '../components/Charts.jsx';
 import OperationModal from '../components/OperationModal.jsx';
-import { USD_BRL } from '../api/mock/assets.js';
 import { fmtBRL, fmtNum, fmtPct, fmtDate, trendClass } from '../lib/format.js';
 
 const BAR_COLORS = [
@@ -99,7 +98,7 @@ export default function Portfolio() {
       <header className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h2 className="text-2xl font-bold">Portfólio</h2>
-          <p className="mt-1">Operações fictícias. O sistema não executa ordens em corretora.</p>
+          <p className="mt-1">Operações fictícias registradas no servidor. O sistema não executa ordens em corretora.</p>
         </div>
         <button className="btn-primary" onClick={() => setModal(true)}>
           <Plus size={15} /> Nova operação
@@ -111,7 +110,7 @@ export default function Portfolio() {
           icon={Wallet}
           label="Valor de mercado"
           value={resumo ? fmtBRL(resumo.valor_total) : '—'}
-          hint={resumo ? `${pos?.length ?? 0} posições · posições em USD convertidas a ${fmtNum(USD_BRL)}` : ''}
+          hint={resumo ? `${pos?.length ?? 0} posições · valores em BRL calculados pelo servidor` : ''}
         />
         <Kpi icon={Coins} iconTone="amber" label="Custo total" value={resumo ? fmtBRL(resumo.custo_total) : '—'} />
         <Kpi
@@ -133,7 +132,7 @@ export default function Portfolio() {
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[1.6fr_1fr]">
-        <Card title={<SectionTitle icon={TrendingUp}>Carteira vs. benchmarks (base 100)</SectionTitle>} bodyClass="p-3">
+        <Card title={<SectionTitle icon={TrendingUp}>Carteira vs. benchmarks (base 100, desde a 1ª operação)</SectionTitle>} bodyClass="p-3">
           {erroResumo ? (
             <ErrorState onRetry={refazerResumo} />
           ) : resumo ? (
@@ -290,6 +289,7 @@ export default function Portfolio() {
           </Empty>
         ) : (
           <ul>
+            {deleteOp.isError && <li className="px-4 pt-3 text-xs text-down">{deleteOp.error.message}</li>}
             {ops.map((o) => (
               <li key={o.id} className="border-b border-border-soft px-4 py-2.5 last:border-0">
                 {/* RNF-07 — abaixo de sm, empilha em 2 linhas (a linha única cortava a data

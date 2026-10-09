@@ -21,6 +21,8 @@ import {
 } from 'lucide-react';
 import { useAuthStore, useUiStore } from '../store/index.js';
 import { useAlerts, useUserTriggers } from '../hooks/queries.js';
+import { api } from '../api/client.js';
+import { desativarWebPush } from '../lib/webPush.js';
 import SearchDialog from './SearchDialog.jsx';
 import SettingsModal from './SettingsModal.jsx';
 import TickerTape from './TickerTape.jsx';
@@ -313,7 +315,11 @@ export default function AppShell({ children }) {
           tema={tema}
           setTema={setTema}
           onNavigate={() => setMobileNavOpen(false)}
-          onSignOut={() => {
+          onSignOut={async () => {
+            // a inscrição de push é do usuário logado — sai junto com a sessão.
+            await desativarWebPush().catch(() => {});
+            useUiStore.getState().setFlag('webPushAtivo', false);
+            await api.logout();
             signOut();
             navigate('/login');
           }}
@@ -337,7 +343,11 @@ export default function AppShell({ children }) {
           tema={tema}
           setTema={setTema}
           onNavigate={() => {}}
-          onSignOut={() => {
+          onSignOut={async () => {
+            // a inscrição de push é do usuário logado — sai junto com a sessão.
+            await desativarWebPush().catch(() => {});
+            useUiStore.getState().setFlag('webPushAtivo', false);
+            await api.logout();
             signOut();
             navigate('/login');
           }}
