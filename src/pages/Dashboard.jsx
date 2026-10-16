@@ -29,7 +29,7 @@ import {
 } from '../hooks/queries.js';
 import { useMediaQuery } from '../hooks/useMediaQuery.js';
 import { generateCandles, PERIODS } from '../api/mock/assets.js';
-import { Card, Kpi, Pill, Skeleton, Empty, ErrorState, SectionTitle } from '../components/ui.jsx';
+import { Card, Kpi, Pill, Skeleton, Empty, ErrorState, SectionTitle, Ilustrativo } from '../components/ui.jsx';
 import { Sparkline, RsiChart } from '../components/Charts.jsx';
 import PriceChart from '../components/PriceChart.jsx';
 import Disclaimer from '../components/Disclaimer.jsx';
@@ -119,7 +119,11 @@ function MarketChartCard({ watchlist }) {
 function TopMoversCard() {
   const { data, isError, refetch } = useTopMovers();
   return (
-    <Card title={<SectionTitle icon={TrendingUp}>Maiores altas e baixas</SectionTitle>} bodyClass="p-0">
+    <Card
+      title={<SectionTitle icon={TrendingUp}>Maiores altas e baixas</SectionTitle>}
+      action={<Ilustrativo motivo="A API ainda não tem rota de maiores altas e baixas; os valores são ilustrativos." />}
+      bodyClass="p-0"
+    >
       {isError ? (
         <ErrorState onRetry={refetch} />
       ) : !data ? (
@@ -163,7 +167,11 @@ function TopMoversCard() {
 function NewsCard() {
   const { data: news, isError, refetch } = useNews();
   return (
-    <Card title={<SectionTitle icon={Newspaper}>Notícias do mercado</SectionTitle>} bodyClass="p-0">
+    <Card
+      title={<SectionTitle icon={Newspaper}>Notícias do mercado</SectionTitle>}
+      action={<Ilustrativo motivo="A API ainda não tem rota de notícias; as manchetes são ilustrativas." />}
+      bodyClass="p-0"
+    >
       {isError ? (
         <ErrorState onRetry={refetch} />
       ) : !news ? (

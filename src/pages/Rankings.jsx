@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom';
 import { Activity, Radar, TrendingDown, TrendingUp } from 'lucide-react';
 import { useRankings } from '../hooks/queries.js';
-import { Card, Empty, ErrorState, Pill, SectionTitle, Skeleton } from '../components/ui.jsx';
+import { Card, Empty, ErrorState, Ilustrativo, Pill, SectionTitle, Skeleton } from '../components/ui.jsx';
 import { fmtNum, fmtPct } from '../lib/format.js';
 
 function RankingCard({ title, icon, tone, itens, isError, onRetry, render }) {
@@ -45,8 +45,11 @@ export default function Rankings() {
   return (
     <div className="mx-auto grid max-w-[1400px] gap-6">
       <header>
-        <h2 className="text-2xl font-bold">Rankings</h2>
-        <p className="mt-1">Recorte do universo de ativos acompanhado pelo sistema, atualizado a cada consulta.</p>
+        <div className="flex flex-wrap items-center gap-2">
+          <h2 className="text-2xl font-bold">Rankings</h2>
+          <Ilustrativo motivo="A API ainda não tem rota de rankings; os valores são ilustrativos." />
+        </div>
+        <p className="mt-1">Altas, baixas, volume relativo e sinais. Os valores desta tela ainda são ilustrativos.</p>
       </header>
 
       <div className="grid gap-6 sm:grid-cols-2">

@@ -110,16 +110,3 @@ export function useMarkAllAlertsRead() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['alerts'] }),
   });
 }
-
-export const useSessions = () => useQuery({ queryKey: ['sessions'], queryFn: () => api.getSessions() });
-
-export function useAccountMutations() {
-  const qc = useQueryClient();
-  const invSessions = () => qc.invalidateQueries({ queryKey: ['sessions'] });
-  return {
-    updateProfile: useMutation({ mutationFn: (p) => api.updateProfile(p) }),
-    changePassword: useMutation({ mutationFn: (p) => api.changePassword(p) }),
-    revokeSession: useMutation({ mutationFn: (id) => api.revokeSession(id), onSuccess: invSessions }),
-    revokeOtherSessions: useMutation({ mutationFn: () => api.revokeOtherSessions(), onSuccess: invSessions }),
-  };
-}
