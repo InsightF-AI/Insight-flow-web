@@ -29,7 +29,7 @@ export function ema(values, period) {
 }
 
 export function rsi(values, period = 14) {
-  const out = [null];
+  const out = values.length ? [null] : [];
   let gain = 0;
   let loss = 0;
   for (let i = 1; i < values.length; i++) {
