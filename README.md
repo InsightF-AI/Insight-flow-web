@@ -28,32 +28,24 @@ npm run dev
 
 Login: qualquer e-mail válido e qualquer senha (o formulário já vem pré-preenchido).
 
-## Deploy na Netlify
+## Deploy em container
 
-O `netlify.toml` já está configurado (`base = "web"`, build `npm run build`, publish `dist`, redirect SPA).
+O front roda em container Nginx, que serve o estático e repassa `/api/` e o WebSocket para a API.
+Front e API ficam na mesma origem para o navegador, então não há CORS a liberar no backend.
 
-Integração com a API de homologação (`https://hom-api-insight.agilesoftware.net.br`), sem alterar o backend:
+- Homologação: https://hom-insight.agilesoftware.net.br (VM da Azure), a cada push no `main`.
+- Produção: https://insight.agilesoftware.net.br (VPS da Hostinger), só por tag `vX.Y.Z` ou disparo manual.
 
-- **REST:** a Netlify repassa `/api/*` para a API (redirect com `status = 200`), como o proxy do Vite faz em dev.
-  Para o navegador é same-origin, então o `CORS_ORIGENS` do backend não precisa incluir o domínio do front.
-- **WebSocket de notificações:** não passa pelo proxy da Netlify; `VITE_WS_URL` (em `[build.environment]`)
-  aponta direto para `wss://.../api/v1/notificacoes/ws`.
-
-Deploy automático: o workflow `.github/workflows/deploy-hom.yml` publica em https://insightflow-hom.netlify.app
-a cada push no `main` (ou manualmente em *Actions → Deploy homologação → Run workflow*). Precisa dos secrets
-`INSIGHT` (personal access token da Netlify) e `NETLIFY_SITE_ID` no repositório.
-
-- **Via Git:** conecte o repositório; a Netlify lê o `netlify.toml` automaticamente.
-- **Via CLI:** `npm run build && npx netlify deploy --prod --dir=dist`.
-
-Se o repositório tiver a pasta `web` na raiz, mantenha o `netlify.toml` na raiz do repositório ou defina
-*Base directory* = `web` nas configurações do site.
+Imagem: `ghcr.io/insightf-ai/insight-flow-web`. Domínios, variáveis, secrets e rollback estão em
+[`docs/deploy.md`](docs/deploy.md). Estratégia de testes em [`docs/testes.md`](docs/testes.md).
 
 ## Estrutura
 
 ```
 web/
-├── netlify.toml
+├── Dockerfile               # build do estático + Nginx que serve e repassa /api
+├── nginx.conf.template      # SPA, cache dos assets e proxy da API e do WebSocket
+├── deploy/                  # composes de homologação e produção
 ├── tailwind.config.js        # tokens de cor/tipografia do design system
 ├── public/icone.png          # logo
 └── src/

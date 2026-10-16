@@ -39,3 +39,46 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  imagem:
+    name: Imagem do container
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout do código
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Buildx
+        uses: docker/setup-buildx-action@v4.4.1
+
+      - name: Build da imagem (sem publicar)
+        uses: docker/build-push-action@v7.4.0
+        with:
+          context: .
+          push: false
+          load: true
+          platforms: linux/amd64
+          tags: insight-flow-web:ci
+
+      # Sobe o container de verdade: valida o entrypoint, o template do Nginx e o proxy da API.
+      - name: Container de pé, SPA e proxy da API
+        env:
+          API_UPSTREAM: https://hom-api-insight.agilesoftware.net.br
+        run: |
+          set -euo pipefail
+          docker run -d --name web -p 8080:8080 -e "API_UPSTREAM=$API_UPSTREAM" insight-flow-web:ci
+          for _ in $(seq 1 30); do
+            estado="$(docker inspect -f '{{.State.Health.Status}}' web)"
+            [ "$estado" = healthy ] && break
+            sleep 2
+          done
+          docker logs web
+          test "$(docker inspect -f '{{.State.Health.Status}}' web)" = healthy
+          curl -fsS http://localhost:8080/healthz
+          curl -fsS http://localhost:8080/ | grep -q 'id="root"'
+          codigo="$(curl -sS -o /dev/null -w '%{http_code}' "http://localhost:8080/api/v1/ativos/buscar?termo=PETR")"
+          echo "proxy /api -> $codigo"
+          test "$codigo" = 401
+          docker rm -f web
