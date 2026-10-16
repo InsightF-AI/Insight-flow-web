@@ -93,10 +93,12 @@ async function apiFetch(path, options = {}, tentouRenovar = false) {
 /** RNF-10 — ponto único de latência simulada (300–800 ms) e do alternador "Forçar erro"
  * (Configurações → Modo desenvolvedor). Usado só pelos métodos de leitura (os que alimentam
  * useQuery/skeletons) — mutações mantêm seus próprios delays e ficam fora do toggle, pra não
- * travar ações como login/criação enquanto se testa o estado de erro de uma tela. */
+ * travar ações como login/criação enquanto se testa o estado de erro de uma tela.
+ * Os alternadores só valem em dev: num build publicado, um valor persistido no navegador não tem
+ * mais onde ser desligado (o card some), então é ignorado. */
 const delayRead = async () => {
   await delay(300 + Math.random() * 500);
-  if (useUiStore.getState().forcarErro) {
+  if (import.meta.env.DEV && useUiStore.getState().forcarErro) {
     throw new Error('Falha ao carregar os dados. Verifique sua conexão e tente novamente.');
   }
 };
@@ -240,14 +242,7 @@ async function fetchRealCandlesEIndicadores(ativoId) {
     .sort((a, b) => a.time.localeCompare(b.time));
   return { candles, ind: computeIndicators(candles) };
 }
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 let readAlerts = new Set();
-const hAgo = (n) => new Date(Date.now() - n * 3600_000).toISOString();
-let sessions = [
-  { id: 'se1', dispositivo: 'Chrome · Windows', local: 'São Paulo, BR', atual: true, ultimo_acesso: new Date().toISOString() },
-  { id: 'se2', dispositivo: 'App · iPhone', local: 'São Paulo, BR', atual: false, ultimo_acesso: hAgo(6) },
-  { id: 'se3', dispositivo: 'Edge · Windows', local: 'Campinas, BR', atual: false, ultimo_acesso: hAgo(72) },
-];
 
 // null para ticker fora do universo mockado (ex: PETR4F, que só existe na API) — sem série pra simular.
 const quoteOf = (ticker) => {
@@ -302,39 +297,6 @@ export const api = {
     // logout é best-effort: mesmo se o backend falhar, a sessão local é encerrada por quem chamou.
     await apiFetch('/auth/logout', { method: 'POST', body: JSON.stringify({ refresh_token: refreshToken }) }).catch(() => {});
   },
-  async recoverPassword({ email }) {
-    await delay(520);
-    if (!EMAIL_RE.test((email || '').trim())) throw new Error('Informe um e-mail válido.');
-    // Resposta sempre genérica — não revela se o e-mail está cadastrado.
-    return { ok: true };
-  },
-  async updateProfile({ nome, email }) {
-    await delay(420);
-    if (!nome?.trim()) throw new Error('Informe seu nome.');
-    if (!email?.includes('@')) throw new Error('Informe um e-mail válido.');
-    return { nome: nome.trim(), email: email.trim() };
-  },
-  async changePassword({ atual, nova }) {
-    await delay(480);
-    if (!atual) throw new Error('Informe sua senha atual.');
-    if (!nova || nova.length < 8) throw new Error('A nova senha precisa ter ao menos 8 caracteres.');
-    return { ok: true };
-  },
-  async getSessions() {
-    await delayRead();
-    return [...sessions].sort((a, b) => Number(b.atual) - Number(a.atual));
-  },
-  async revokeSession(id) {
-    await delay(260);
-    sessions = sessions.filter((s) => s.id !== id);
-    return { ok: true };
-  },
-  async revokeOtherSessions() {
-    await delay(340);
-    sessions = sessions.filter((s) => s.atual);
-    return { ok: true };
-  },
-
   /* ----- ativos (RF-04, RF-05, RF-06) ----- */
   async searchAssets(termo) {
     const t = (termo || '').trim();
@@ -853,7 +815,7 @@ export const api = {
       };
     }
     await delay(900);
-    if (useUiStore.getState().iaIndisponivel) {
+    if (import.meta.env.DEV && useUiStore.getState().iaIndisponivel) {
       throw new Error('Serviço de análise por IA temporariamente indisponível.');
     }
     return {

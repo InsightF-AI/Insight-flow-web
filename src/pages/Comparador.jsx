@@ -1,8 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Plus, X } from 'lucide-react';
-import { ASSETS } from '../api/mock/assets.js';
-import { useAsset, useIndicators, useScore } from '../hooks/queries.js';
+import { useAsset, useIndicators, useScore, useSignals, useWatchlist } from '../hooks/queries.js';
 import { Card, Empty, ErrorState, Skeleton } from '../components/ui.jsx';
 import { fmtNum, fmtPct, trendClass } from '../lib/format.js';
 
@@ -21,6 +20,8 @@ function ComparadorColuna({ ticker, onRemove }) {
   const { data: asset, isError, refetch } = useAsset(ticker);
   const { data: snapshot } = useIndicators(ticker);
   const { data: score } = useScore(ticker);
+  // sinais reais do ativo (os do score são ilustrativos).
+  const { data: sinais } = useSignals({ ticker });
   const cot = asset?.cotacao;
 
   return (
@@ -45,8 +46,8 @@ function ComparadorColuna({ ticker, onRemove }) {
           <Linha label="Variação do dia" value={cot ? fmtPct(cot.variacao_pct) : '—'} tone={trendClass(cot?.variacao_pct)} />
           <Linha label="RSI (14)" value={snapshot ? fmtNum(snapshot['RSI (14)'], 1) : '—'} />
           <Linha label="Volume relativo" value={snapshot ? `${fmtNum(snapshot['Volume relativo'], 2)}×` : '—'} />
-          <Linha label="Score de oportunidade" value={score ? score.score : '—'} />
-          <Linha label="Sinais ativos" value={score ? score.sinais : '—'} />
+          <Linha label="Score (ilustrativo)" value={score ? score.score : '—'} />
+          <Linha label="Sinais ativos" value={sinais ? sinais.length : '—'} />
         </div>
       )}
       <Link to={`/ativo/${ticker}`} className="mt-3 block text-center text-xs font-semibold text-accent">
@@ -58,8 +59,12 @@ function ComparadorColuna({ ticker, onRemove }) {
 
 /** Comparador lado a lado — inspirado no comparador de ativos do investidor10. */
 export default function Comparador() {
-  const [tickers, setTickers] = useState(['PETR4', 'VALE3']);
+  // só ativos da watchlist têm dados reais na API (é lá que ganham ativo_id) — o catálogo vem dela.
+  const { data: watchlist } = useWatchlist();
+  const [escolhidos, setTickers] = useState(null);
   const [novo, setNovo] = useState('');
+  // até o usuário mexer, compara os dois primeiros da watchlist.
+  const tickers = escolhidos ?? (watchlist ?? []).slice(0, 2).map((w) => w.ticker);
 
   const adicionar = () => {
     if (!novo || tickers.includes(novo) || tickers.length >= MAX) return;
@@ -67,7 +72,7 @@ export default function Comparador() {
     setNovo('');
   };
   const remover = (t) => setTickers(tickers.filter((x) => x !== t));
-  const disponiveis = ASSETS.filter((a) => !tickers.includes(a.ticker));
+  const disponiveis = (watchlist ?? []).filter((a) => !tickers.includes(a.ticker));
 
   return (
     <div className="mx-auto grid max-w-[1400px] gap-6">
@@ -94,7 +99,11 @@ export default function Comparador() {
 
       {tickers.length === 0 ? (
         <Card>
-          <Empty>Adicione ao menos um ativo para comparar.</Empty>
+          <Empty>
+            {watchlist && watchlist.length === 0
+              ? 'Adicione ativos à watchlist pela busca para compará-los.'
+              : 'Adicione ao menos um ativo para comparar.'}
+          </Empty>
         </Card>
       ) : (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">

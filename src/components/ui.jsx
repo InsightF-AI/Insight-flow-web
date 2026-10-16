@@ -28,6 +28,15 @@ export function Pill({ tone = 'slate', children, className = '' }) {
   return <span className={`pill ${TONES[tone] ?? TONES.slate} ${className}`}>{children}</span>;
 }
 
+/** Selo para blocos que ainda usam dados ilustrativos (a API não tem a rota correspondente). */
+export function Ilustrativo({ motivo = 'A API ainda não fornece esta informação; os valores são ilustrativos.' }) {
+  return (
+    <span title={motivo} className="cursor-help">
+      <Pill tone="slate">Ilustrativo</Pill>
+    </span>
+  );
+}
+
 const ICON_TONES = {
   accent: 'bg-accent text-white',
   up: 'bg-up text-[#06251a]',

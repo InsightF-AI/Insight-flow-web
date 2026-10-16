@@ -5,7 +5,7 @@ import { useAsset, useHistory, useIndicators, useSignals, useScore, useAnalysis,
 import { useMediaQuery } from '../hooks/useMediaQuery.js';
 import { useUiStore } from '../store/index.js';
 import { PERIODS } from '../api/mock/assets.js';
-import { Card, Pill, Skeleton, Empty, ErrorState, SectionTitle } from '../components/ui.jsx';
+import { Card, Pill, Skeleton, Empty, ErrorState, SectionTitle, Ilustrativo } from '../components/ui.jsx';
 import PriceChart from '../components/PriceChart.jsx';
 import { RsiChart, MacdChart } from '../components/Charts.jsx';
 import OperationModal from '../components/OperationModal.jsx';
@@ -102,6 +102,13 @@ export default function AssetDetail() {
           </button>
         </div>
       </header>
+
+      {watchlist && !naWatchlist && (
+        <p className="rounded-sm border border-border-soft bg-elevated px-4 py-3 text-xs text-fg-2">
+          Este ativo não está na sua watchlist: cotação, histórico, indicadores e sinais abaixo são ilustrativos.
+          Adicione-o à watchlist para ver os dados reais.
+        </p>
+      )}
 
       <OperationModal open={opModal} onClose={() => setOpModal(false)} initialTicker={ticker} />
 
@@ -235,7 +242,10 @@ export default function AssetDetail() {
         </div>
 
         <div className="grid content-start gap-6">
-          <Card title={<SectionTitle icon={Target}>Score de oportunidade</SectionTitle>}>
+          <Card
+            title={<SectionTitle icon={Target}>Score de oportunidade</SectionTitle>}
+            action={<Ilustrativo motivo="A API não expõe o peso das regras de sinal; o score é ilustrativo." />}
+          >
             {erroScore ? (
               <ErrorState onRetry={refazerScore} />
             ) : score ? (
@@ -370,7 +380,11 @@ export default function AssetDetail() {
             )}
           </Card>
 
-          <Card title={<SectionTitle icon={Newspaper}>Notícias</SectionTitle>} bodyClass="p-0">
+          <Card
+            title={<SectionTitle icon={Newspaper}>Notícias</SectionTitle>}
+            action={<Ilustrativo motivo="A API ainda não tem rota de notícias; as manchetes são ilustrativas." />}
+            bodyClass="p-0"
+          >
             {erroNews ? (
               <ErrorState onRetry={refazerNews} />
             ) : !news ? (
