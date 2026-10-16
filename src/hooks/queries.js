@@ -87,13 +87,17 @@ export function useDeleteOperation() {
 
 export function useWatchlistMutations() {
   const qc = useQueryClient();
-  // retorna a promise: a mutation só sai de isPending quando a lista já recarregou, então o botão
-  // não volta ao estado antigo (e aceita outro clique) entre o POST e o refetch.
+  const pushToast = useToastStore((s) => s.push);
+  // onSettled retorna a promise: a mutation só sai de isPending quando a lista já recarregou, então o
+  // botão não volta ao estado antigo (e aceita outro clique) entre a chamada e o refetch. Recarrega
+  // também no erro (ex: 502 do proxy depois de o servidor ter aplicado a mudança), pra tela refletir o real.
   const inv = () => qc.invalidateQueries({ queryKey: ['watchlist'] });
+  const avisarErro = (acao) => (err, ticker) =>
+    pushToast({ titulo: `${ticker} — não foi possível ${acao}`, texto: err.message, link: `/ativo/${ticker}` });
   return {
-    add: useMutation({ mutationFn: (t) => api.addToWatchlist(t), onSuccess: inv }),
-    remove: useMutation({ mutationFn: (t) => api.removeFromWatchlist(t), onSuccess: inv }),
-    toggle: useMutation({ mutationFn: (t) => api.toggleNotify(t), onSuccess: inv }),
+    add: useMutation({ mutationFn: (t) => api.addToWatchlist(t), onSettled: inv, onError: avisarErro('adicionar à watchlist') }),
+    remove: useMutation({ mutationFn: (t) => api.removeFromWatchlist(t), onSettled: inv, onError: avisarErro('remover da watchlist') }),
+    toggle: useMutation({ mutationFn: (t) => api.toggleNotify(t), onSettled: inv, onError: avisarErro('alterar as notificações') }),
   };
 }
 

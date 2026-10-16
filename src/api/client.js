@@ -488,11 +488,11 @@ export const api = {
         const sinais = await apiFetch(`/ativos/${it.ativo.id}/sinais`)
           .then((lista) => lista.filter((s) => !s.data_desativacao).length)
           .catch(() => 0);
-        // se a cotação real falhar (ex: BrAPI fora do ar, 503), cai pro mock em vez de quebrar a lista inteira;
-        // ticker sem mock fica com cotacao null (a UI mostra "—").
+        // se a cotação real falhar (ex: BrAPI fora do ar, 503), fica null em vez de quebrar a lista inteira
+        // — a UI mostra "—", como na tela do ativo (um preço simulado aqui passaria por real).
         const cotacao = await apiFetch(`/ativos/${it.ativo.id}/cotacao`)
           .then((cot) => mapCotacao(it.ativo.ticker, cot))
-          .catch(() => quoteOf(it.ativo.ticker));
+          .catch(() => null);
         return {
           ticker: it.ativo.ticker,
           nome: it.ativo.nome,
@@ -519,7 +519,12 @@ export const api = {
   async removeFromWatchlist(ticker) {
     const entry = await resolverAtivoCache(ticker);
     if (!entry) return { ok: true };
-    await apiFetch(`/watchlist/${entry.id}`, { method: 'DELETE' });
+    try {
+      await apiFetch(`/watchlist/${entry.id}`, { method: 'DELETE' });
+    } catch (err) {
+      // 404 = já tinha saído da watchlist (ex: removido em outra aba).
+      if (err.status !== 404) throw err;
+    }
     watchlistIndex.delete(ticker);
     return { ok: true };
   },
