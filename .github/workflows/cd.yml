@@ -1,0 +1,231 @@
+# CD: push na main roda o CI, publica a imagem e implanta só na homologação.
+# Produção só muda com uma tag vX.Y.Z ou com o disparo manual, e reaproveita a imagem
+# que a homologação já publicou — esse passo não faz build novo.
+name: CD
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      image_sha:
+        description: SHA do commit já implantado na homologação
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: deploy-insightflow-web
+  cancel-in-progress: false
+
+jobs:
+  ci:
+    name: Testes antes do deploy
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/ci.yml
+
+  homologacao:
+    name: Deploy - Homologação
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: homologacao
+      url: https://hom-insight.agilesoftware.net.br
+    env:
+      API_UPSTREAM: https://hom-api-insight.agilesoftware.net.br
+      WEB_DOMINIO: hom-insight.agilesoftware.net.br
+    steps:
+      - name: Checkout do código
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Nome da imagem
+        id: image
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      - name: Buildx
+        uses: docker/setup-buildx-action@v4.4.1
+
+      - name: Login no GHCR
+        uses: docker/login-action@v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Só amd64: a VM da Azure e a VPS da Hostinger são x86.
+      - name: Build e push
+        uses: docker/build-push-action@v7.4.0
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64
+          tags: |
+            ${{ steps.image.outputs.name }}:${{ github.sha }}
+            ${{ steps.image.outputs.name }}:latest
+
+      - name: Preparar SSH
+        env:
+          SSH_KEY: ${{ secrets.VM_SSH_KEY }}
+          VM_HOST: ${{ secrets.VM_HOST }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" | tr -d '\r' > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
+
+      - name: Copiar compose e subir na VM
+        env:
+          VM_HOST: ${{ secrets.VM_HOST }}
+          VM_USER: ${{ secrets.VM_USER }}
+          GHCR_TOKEN: ${{ github.token }}
+          IMAGE_TAG: ${{ github.sha }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          SSH=(ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes)
+          "${SSH[@]}" "$VM_USER@$VM_HOST" "mkdir -p ~/apps/insightflow/web"
+          scp -i ~/.ssh/deploy_key -o IdentitiesOnly=yes \
+            deploy/docker-compose.yml \
+            "$VM_USER@$VM_HOST:apps/insightflow/web/docker-compose.yml"
+          printf '%s\n' "$GHCR_TOKEN" | "${SSH[@]}" "$VM_USER@$VM_HOST" \
+            "docker login ghcr.io -u ${ACTOR} --password-stdin"
+          "${SSH[@]}" "$VM_USER@$VM_HOST" \
+            "set -euo pipefail
+             cd ~/apps/insightflow/web
+             export TAG='${IMAGE_TAG}'
+             export API_UPSTREAM='${API_UPSTREAM}'
+             export WEB_DOMINIO='${WEB_DOMINIO}'
+             docker compose pull
+             docker compose up -d --force-recreate --wait --wait-timeout 120
+             docker image prune -f"
+
+      - name: Smoke test
+        run: |
+          set -euo pipefail
+          curl --retry 12 --retry-delay 5 --retry-all-errors -fsS \
+            "https://${WEB_DOMINIO}/healthz"
+          curl --retry 6 --retry-delay 5 --retry-all-errors -fsS "https://${WEB_DOMINIO}/" \
+            | grep -q 'id="root"'
+
+      - name: Smoke test do WebSocket
+        run: |
+          set -euo pipefail
+          chave="$(openssl rand -base64 16)"
+          situacao="$(curl -sS -i --http1.1 --max-time 20 \
+            -H 'Connection: Upgrade' -H 'Upgrade: websocket' \
+            -H "Sec-WebSocket-Key: $chave" -H 'Sec-WebSocket-Version: 13' \
+            "https://${WEB_DOMINIO}/api/v1/notificacoes/ws" | head -1)"
+          echo "$situacao"
+          echo "$situacao" | grep -q 101
+
+  producao:
+    name: Deploy - Produção
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: production
+      url: https://insight.agilesoftware.net.br
+    env:
+      API_UPSTREAM: https://api-insight.agilesoftware.net.br
+      WEB_DOMINIO: insight.agilesoftware.net.br
+    steps:
+      - name: Conferir quem disparou
+        env:
+          ATOR: ${{ github.actor }}
+        run: |
+          if [ "$ATOR" != "Vinicius11s" ]; then
+            echo "::error::Deploy de produção só pelo usuário Vinicius11s (disparado por $ATOR)."
+            exit 1
+          fi
+
+      - name: Checkout do código
+        uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.image_sha || github.ref }}
+          persist-credentials: false
+
+      - name: Commit da imagem já testada
+        id: image
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          sha="$(git rev-parse HEAD)"
+          if ! [[ "$sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::SHA inválido: $sha"
+            exit 1
+          fi
+          situacao="$(gh api "repos/${GITHUB_REPOSITORY}/compare/main...${sha}" --jq '.status')"
+          if [ "$situacao" != "behind" ] && [ "$situacao" != "identical" ]; then
+            echo "::error::O commit $sha não é ancestral da main (comparação: $situacao)."
+            exit 1
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      - name: Buildx
+        uses: docker/setup-buildx-action@v4.4.1
+
+      - name: Confirmar que a imagem já existe
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+          ACTOR: ${{ github.actor }}
+          IMAGE: ${{ steps.image.outputs.name }}:${{ steps.image.outputs.sha }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$GHCR_TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
+          docker buildx imagetools inspect "$IMAGE" >/dev/null
+
+      - name: Preparar SSH
+        env:
+          SSH_KEY: ${{ secrets.PROD_SSH_KEY }}
+          PROD_HOST: ${{ secrets.PROD_HOST }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" | tr -d '\r' > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "$PROD_HOST" >> ~/.ssh/known_hosts
+
+      - name: Copiar compose e subir na Hostinger
+        env:
+          PROD_HOST: ${{ secrets.PROD_HOST }}
+          PROD_USER: ${{ secrets.PROD_USER }}
+          GHCR_TOKEN: ${{ github.token }}
+          IMAGE_TAG: ${{ steps.image.outputs.sha }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          SSH=(ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes)
+          "${SSH[@]}" "$PROD_USER@$PROD_HOST" "mkdir -p ~/apps/insightflow/web"
+          scp -i ~/.ssh/deploy_key -o IdentitiesOnly=yes \
+            deploy/docker-compose.prod.yml \
+            "$PROD_USER@$PROD_HOST:apps/insightflow/web/docker-compose.yml"
+          printf '%s\n' "$GHCR_TOKEN" | "${SSH[@]}" "$PROD_USER@$PROD_HOST" \
+            "install -m 700 -d /root/.docker-deploy && export DOCKER_CONFIG=/root/.docker-deploy && docker login ghcr.io -u ${ACTOR} --password-stdin"
+          "${SSH[@]}" "$PROD_USER@$PROD_HOST" \
+            "set -euo pipefail
+             export DOCKER_CONFIG=/root/.docker-deploy
+             cd ~/apps/insightflow/web
+             export TAG='${IMAGE_TAG}'
+             export API_UPSTREAM='${API_UPSTREAM}'
+             export WEB_DOMINIO='${WEB_DOMINIO}'
+             docker compose pull
+             docker compose up -d --force-recreate --wait --wait-timeout 120
+             docker image prune -f"
+
+      - name: Smoke test
+        run: |
+          set -euo pipefail
+          curl --retry 12 --retry-delay 5 --retry-all-errors -fsS \
+            "https://${WEB_DOMINIO}/healthz"
+          curl --retry 6 --retry-delay 5 --retry-all-errors -fsS "https://${WEB_DOMINIO}/" \
+            | grep -q 'id="root"'

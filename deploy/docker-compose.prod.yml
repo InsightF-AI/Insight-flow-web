@@ -1,0 +1,25 @@
+# Produção na Hostinger. O CD copia este arquivo para ~/apps/insightflow/web.
+# O proxy é o do Coolify: rede coolify, entrypoint https, certificado letsencrypt —
+# os mesmos nomes do docker-compose.prod.yml do backend.
+
+services:
+  web:
+    image: ghcr.io/insightf-ai/insight-flow-web:${TAG:-latest}
+    container_name: insightflow-web
+    restart: unless-stopped
+    environment:
+      API_UPSTREAM: ${API_UPSTREAM:-https://api-insight.agilesoftware.net.br}
+    networks: [coolify]
+    labels:
+      - traefik.enable=true
+      - coolify.managed=true
+      - traefik.docker.network=coolify
+      - traefik.http.routers.insightflow-web.rule=Host(`${WEB_DOMINIO:-insight.agilesoftware.net.br}`)
+      - traefik.http.routers.insightflow-web.entrypoints=https
+      - traefik.http.routers.insightflow-web.tls=true
+      - traefik.http.routers.insightflow-web.tls.certresolver=letsencrypt
+      - traefik.http.services.insightflow-web.loadbalancer.server.port=8080
+
+networks:
+  coolify:
+    external: true

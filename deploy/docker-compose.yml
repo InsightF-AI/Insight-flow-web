@@ -1,0 +1,24 @@
+# Homologação na vm-lab (Azure). O CD copia este arquivo para ~/apps/insightflow/web.
+# Uma imagem só serve os dois ambientes: o que muda é API_UPSTREAM.
+# Os valores padrão abaixo valem para `docker compose up -d` feito na mão na VM.
+
+services:
+  web:
+    image: ghcr.io/insightf-ai/insight-flow-web:${TAG:-latest}
+    container_name: insightflow-web
+    restart: unless-stopped
+    environment:
+      API_UPSTREAM: ${API_UPSTREAM:-https://hom-api-insight.agilesoftware.net.br}
+    networks: [proxy]
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=proxy
+      - traefik.http.routers.insightflow-web.rule=Host(`${WEB_DOMINIO:-hom-insight.agilesoftware.net.br}`)
+      - traefik.http.routers.insightflow-web.entrypoints=websecure
+      - traefik.http.routers.insightflow-web.tls.certresolver=le
+      - traefik.http.services.insightflow-web.loadbalancer.server.port=8080
+
+networks:
+  proxy:
+    external: true
+    name: proxy

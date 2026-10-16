@@ -1,0 +1,9 @@
+# Lido pelo entrypoint do Nginx antes do envsubst, para o template receber a raiz da API
+# sem barra no fim: com barra, o proxy_pass trocaria o prefixo /api/ da requisição.
+if [ -z "${API_UPSTREAM:-}" ]; then
+    echo "API_UPSTREAM nao definida: informe a raiz da API, por exemplo https://hom-api-insight.agilesoftware.net.br" >&2
+    exit 1
+fi
+
+API_UPSTREAM="${API_UPSTREAM%/}"
+export API_UPSTREAM

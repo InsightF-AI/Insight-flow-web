@@ -5,12 +5,11 @@ import { useAuthStore, useUiStore } from '../store/index.js';
 import { useToastStore } from '../store/toastStore.js';
 import { notificarDisparo } from '../lib/notify.js';
 import { ativarWebPush, webPushSuportado } from '../lib/webPush.js';
+import { urlDoWebSocket } from '../lib/ws.js';
 
-// Em dev, passa pelo proxy do Vite (same-origin). Em deploy estático (Netlify), não há proxy de
-// WebSocket: VITE_WS_URL aponta direto pra API (ver netlify.toml).
-const WS_URL =
-  import.meta.env.VITE_WS_URL ||
-  `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/api/v1/notificacoes/ws`;
+// Em dev o proxy do Vite repassa o WebSocket; em container, o Nginx da própria imagem.
+// VITE_WS_URL só é necessária se o WebSocket tiver que sair para outra origem.
+const WS_URL = urlDoWebSocket(import.meta.env.VITE_WS_URL, window.location);
 const RECONEXAO_MAX_MS = 15_000;
 
 /** RF-18/UC-07 — notificações em tempo real. Quem avalia as regras é o scheduler do backend;

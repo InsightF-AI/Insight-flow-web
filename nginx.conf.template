@@ -1,0 +1,62 @@
+# Renderizado pelo envsubst do entrypoint do Nginx: ${API_UPSTREAM} é a raiz da API.
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+server {
+    listen 8080;
+    server_name _;
+    server_tokens off;
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    add_header X-Content-Type-Options nosniff;
+    add_header X-Frame-Options SAMEORIGIN;
+    add_header Referrer-Policy strict-origin-when-cross-origin;
+
+    gzip on;
+    gzip_vary on;
+    gzip_min_length 1024;
+    gzip_types text/plain text/css application/javascript application/json image/svg+xml;
+
+    location = /healthz {
+        access_log off;
+        default_type text/plain;
+        return 200 "ok\n";
+    }
+
+    # REST e WebSocket da API na mesma origem do front: o navegador não faz preflight de CORS
+    # e o backend não precisa liberar este domínio.
+    location /api/ {
+        proxy_pass ${API_UPSTREAM};
+        proxy_http_version 1.1;
+        proxy_ssl_server_name on;
+        proxy_set_header Host $proxy_host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+
+    # Arquivos com hash no nome: podem ficar no cache do navegador para sempre.
+    location /assets/ {
+        add_header Cache-Control "public, max-age=31536000, immutable";
+        try_files $uri =404;
+    }
+
+    # O index.html nunca é cacheado: é ele que aponta para os assets da versão nova.
+    location = /index.html {
+        add_header Cache-Control "no-store";
+        add_header X-Content-Type-Options nosniff;
+        add_header X-Frame-Options SAMEORIGIN;
+        add_header Referrer-Policy strict-origin-when-cross-origin;
+    }
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}
