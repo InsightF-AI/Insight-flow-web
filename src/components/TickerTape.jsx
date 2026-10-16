@@ -18,7 +18,7 @@ function Item({ w, dup }) {
  * -50% para o loop ficar contínuo, sem salto no fim. */
 export default function TickerTape() {
   const { data: watchlist } = useWatchlist();
-  const itens = watchlist ?? [];
+  const itens = (watchlist ?? []).filter((w) => w.cotacao);
   if (itens.length === 0) return null;
 
   return (

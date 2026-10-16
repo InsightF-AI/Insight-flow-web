@@ -249,8 +249,10 @@ let sessions = [
   { id: 'se3', dispositivo: 'Edge · Windows', local: 'Campinas, BR', atual: false, ultimo_acesso: hAgo(72) },
 ];
 
+// null para ticker fora do universo mockado (ex: PETR4F, que só existe na API) — sem série pra simular.
 const quoteOf = (ticker) => {
   const candles = generateCandles(ticker);
+  if (candles.length < 2) return null;
   const last = candles[candles.length - 1];
   const prev = candles[candles.length - 2];
   const variacao = last.close - prev.close;
@@ -523,7 +525,8 @@ export const api = {
         const sinais = await apiFetch(`/ativos/${it.ativo.id}/sinais`)
           .then((lista) => lista.filter((s) => !s.data_desativacao).length)
           .catch(() => 0);
-        // se a cotação real falhar (ex: BrAPI fora do ar, 503), cai pro mock em vez de quebrar a lista inteira.
+        // se a cotação real falhar (ex: BrAPI fora do ar, 503), cai pro mock em vez de quebrar a lista inteira;
+        // ticker sem mock fica com cotacao null (a UI mostra "—").
         const cotacao = await apiFetch(`/ativos/${it.ativo.id}/cotacao`)
           .then((cot) => mapCotacao(it.ativo.ticker, cot))
           .catch(() => quoteOf(it.ativo.ticker));
@@ -542,11 +545,17 @@ export const api = {
     );
   },
   async addToWatchlist(ticker) {
-    await apiFetch('/watchlist', { method: 'POST', body: JSON.stringify({ ticker }) });
+    try {
+      await apiFetch('/watchlist', { method: 'POST', body: JSON.stringify({ ticker }) });
+    } catch (err) {
+      // 409 = já está na watchlist (ex: clique duplo, ou a lista na tela ainda não tinha recarregado).
+      if (err.status !== 409) throw err;
+    }
     return { ok: true };
   },
   async removeFromWatchlist(ticker) {
-    const entry = watchlistIndex.get(ticker);
+    const entry = await resolverAtivoCache(ticker);
+    if (!entry) return { ok: true };
     await apiFetch(`/watchlist/${entry.id}`, { method: 'DELETE' });
     watchlistIndex.delete(ticker);
     return { ok: true };

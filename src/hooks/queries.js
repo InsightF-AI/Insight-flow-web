@@ -87,6 +87,8 @@ export function useDeleteOperation() {
 
 export function useWatchlistMutations() {
   const qc = useQueryClient();
+  // retorna a promise: a mutation só sai de isPending quando a lista já recarregou, então o botão
+  // não volta ao estado antigo (e aceita outro clique) entre o POST e o refetch.
   const inv = () => qc.invalidateQueries({ queryKey: ['watchlist'] });
   return {
     add: useMutation({ mutationFn: (t) => api.addToWatchlist(t), onSuccess: inv }),

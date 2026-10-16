@@ -18,6 +18,7 @@ export default function SearchPage() {
 
   const lista = (data ?? []).filter((a) => tipo === 'TODOS' || a.tipo === tipo);
   const naWatchlist = (t) => (watchlist ?? []).some((w) => w.ticker === t);
+  const salvando = (t) => (add.isPending && add.variables === t) || (remove.isPending && remove.variables === t);
 
   return (
     <div className="mx-auto grid max-w-4xl gap-6">
@@ -106,8 +107,11 @@ export default function SearchPage() {
                 <button
                   onClick={() => (naWatchlist(a.ticker) ? remove.mutate(a.ticker) : add.mutate(a.ticker))}
                   className={naWatchlist(a.ticker) ? 'btn-ghost' : 'btn-primary'}
+                  disabled={!watchlist || salvando(a.ticker)}
                 >
-                  {naWatchlist(a.ticker) ? (
+                  {salvando(a.ticker) ? (
+                    'Salvando…'
+                  ) : naWatchlist(a.ticker) ? (
                     <>
                       <Check size={14} /> Na watchlist
                     </>
