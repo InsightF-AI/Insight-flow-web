@@ -39,6 +39,10 @@ Integração com a API de homologação (`https://hom-api-insight.agilesoftware.
 - **WebSocket de notificações:** não passa pelo proxy da Netlify; `VITE_WS_URL` (em `[build.environment]`)
   aponta direto para `wss://.../api/v1/notificacoes/ws`.
 
+Deploy automático: o workflow `.github/workflows/deploy-hom.yml` publica em https://insightflow-hom.netlify.app
+a cada push no `main` (ou manualmente em *Actions → Deploy homologação → Run workflow*). Precisa dos secrets
+`INSIGHT` (personal access token da Netlify) e `NETLIFY_SITE_ID` no repositório.
+
 - **Via Git:** conecte o repositório; a Netlify lê o `netlify.toml` automaticamente.
 - **Via CLI:** `npm run build && npx netlify deploy --prod --dir=dist`.
 
