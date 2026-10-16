@@ -19,13 +19,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+      # o secret do token da Netlify se chama INSIGHT no repositório
+      NETLIFY_AUTH_TOKEN: ${{ secrets.INSIGHT }}
       NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
     steps:
       - name: Conferir secrets
         run: |
           if [ -z "$NETLIFY_AUTH_TOKEN" ] || [ -z "$NETLIFY_SITE_ID" ]; then
-            echo "::error::Cadastre NETLIFY_AUTH_TOKEN e NETLIFY_SITE_ID em Settings → Secrets and variables → Actions."
+            echo "::error::Cadastre os secrets INSIGHT (token da Netlify) e NETLIFY_SITE_ID em Settings → Secrets and variables → Actions."
             exit 1
           fi
 
