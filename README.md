@@ -32,6 +32,13 @@ Login: qualquer e-mail válido e qualquer senha (o formulário já vem pré-pree
 
 O `netlify.toml` já está configurado (`base = "web"`, build `npm run build`, publish `dist`, redirect SPA).
 
+Integração com a API de homologação (`https://hom-api-insight.agilesoftware.net.br`), sem alterar o backend:
+
+- **REST:** a Netlify repassa `/api/*` para a API (redirect com `status = 200`), como o proxy do Vite faz em dev.
+  Para o navegador é same-origin, então o `CORS_ORIGENS` do backend não precisa incluir o domínio do front.
+- **WebSocket de notificações:** não passa pelo proxy da Netlify; `VITE_WS_URL` (em `[build.environment]`)
+  aponta direto para `wss://.../api/v1/notificacoes/ws`.
+
 - **Via Git:** conecte o repositório; a Netlify lê o `netlify.toml` automaticamente.
 - **Via CLI:** `npm run build && npx netlify deploy --prod --dir=dist`.
 
