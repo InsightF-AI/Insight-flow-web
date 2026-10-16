@@ -118,13 +118,20 @@ jobs:
       - name: Smoke test do WebSocket
         run: |
           set -euo pipefail
-          chave="$(openssl rand -base64 16)"
-          situacao="$(curl -sS -i --http1.1 --max-time 20 \
+          # Um 101 mantem a conexao aberta: o curl termina por tempo (28) com os cabecalhos
+          # ja gravados. Qualquer outro codigo de saida e falha de verdade.
+          saida=0
+          curl -sS --http1.1 --max-time 8 -o /dev/null -D cabecalhos.txt \
             -H 'Connection: Upgrade' -H 'Upgrade: websocket' \
-            -H "Sec-WebSocket-Key: $chave" -H 'Sec-WebSocket-Version: 13' \
-            "https://${WEB_DOMINIO}/api/v1/notificacoes/ws" | head -1)"
-          echo "$situacao"
-          echo "$situacao" | grep -q 101
+            -H "Sec-WebSocket-Key: $(openssl rand -base64 16)" \
+            -H 'Sec-WebSocket-Version: 13' \
+            "https://${WEB_DOMINIO}/api/v1/notificacoes/ws" || saida=$?
+          if [ "$saida" != 0 ] && [ "$saida" != 28 ]; then
+            echo "::error::curl falhou com codigo $saida"
+            exit 1
+          fi
+          head -1 cabecalhos.txt
+          head -1 cabecalhos.txt | grep -q 101
 
   producao:
     name: Deploy - Produção
