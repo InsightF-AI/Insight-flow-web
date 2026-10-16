@@ -53,16 +53,12 @@ export function AuthLayout({ titulo, subtitulo, children, footer }) {
 
           <div className="mt-6">
             <h2 className="text-xl font-bold text-fg-0">{titulo}</h2>
-            <p className="mt-1 text-sm text-fg-2">{subtitulo}</p>
+            {subtitulo && <p className="mt-1 text-sm text-fg-2">{subtitulo}</p>}
           </div>
 
           <div className="mt-6">{children}</div>
 
           <div className="mt-5 text-center text-sm text-fg-2">{footer}</div>
-
-          <p className="mt-5 border-t border-border-soft pt-3 text-center text-xs text-fg-3">
-            Dados fictícios · versão de demonstração
-          </p>
         </div>
       </div>
     </div>
@@ -86,9 +82,7 @@ export default function Login() {
 
   return (
     <AuthLayout
-      titulo="Entrar"
-      subtitulo="Use qualquer e-mail válido — os dados desta versão são mockados."
-      footer={
+      titulo="Entrar"      footer={
         <>
           Não tem conta? <Link to="/cadastro">Criar cadastro</Link>
         </>
