@@ -342,7 +342,7 @@ export const api = {
     if (!t) return [];
     // a busca real não devolve preço (só a cotação por ativo_id tem isso, e resultado de busca
     // ainda não tem um ativo_id — só ganha um ao ser adicionado à watchlist). SearchPage.jsx
-    // mostra 0,00 na coluna de preço pra esses itens até lá.
+    // mostra "—" na coluna de preço pra esses itens até lá.
     return apiFetch(`/ativos/buscar?termo=${encodeURIComponent(t)}`);
   },
   async getAsset(ticker) {
@@ -353,7 +353,8 @@ export const api = {
       if (!asset) throw new Error('Ativo não encontrado.');
       return { ...asset, cotacao: quoteOf(asset.ticker) };
     }
-    const cot = await apiFetch(`/ativos/${cached.id}/cotacao`);
+    // cotação fora do ar (503 da fonte de mercado) não derruba a tela do ativo: o cabeçalho mostra "—".
+    const cot = await apiFetch(`/ativos/${cached.id}/cotacao`).catch(() => null);
     return {
       ticker,
       nome: cached.nome,
@@ -361,7 +362,7 @@ export const api = {
       setor: cached.setor,
       moeda: cached.moeda,
       fonte: cached.tipo === 'CRIPTO' ? 'Binance' : 'brapi',
-      cotacao: mapCotacao(ticker, cot),
+      cotacao: cot ? mapCotacao(ticker, cot) : null,
     };
   },
   async getQuotes(tickers) {

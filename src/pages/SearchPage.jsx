@@ -103,7 +103,7 @@ export default function SearchPage() {
                     {a.nome} · {a.setor} · {a.moeda}
                   </div>
                 </Link>
-                <span className="num hidden text-sm text-fg-2 sm:block">{fmtNum(a.base)}</span>
+                <span className="num hidden text-sm text-fg-2 sm:block">{a.base != null ? fmtNum(a.base) : '—'}</span>
                 <button
                   onClick={() => (naWatchlist(a.ticker) ? remove.mutate(a.ticker) : add.mutate(a.ticker))}
                   className={naWatchlist(a.ticker) ? 'btn-ghost' : 'btn-primary'}

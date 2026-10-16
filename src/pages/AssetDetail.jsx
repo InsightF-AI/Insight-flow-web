@@ -84,6 +84,8 @@ export default function AssetDetail() {
                   {fmtNum(cot.variacao)} ({fmtPct(cot.variacao_pct)}) hoje
                 </div>
               </>
+            ) : asset ? (
+              <div className="text-sm text-fg-3">Cotação indisponível</div>
             ) : (
               <Skeleton className="h-8 w-28" />
             )}
