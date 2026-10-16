@@ -66,8 +66,8 @@ export function AuthLayout({ titulo, subtitulo, children, footer }) {
 }
 
 export default function Login() {
-  const [email, setEmail] = useState('investidor@exemplo.com');
-  const [senha, setSenha] = useState('demo1234');
+  const [email, setEmail] = useState('');
+  const [senha, setSenha] = useState('');
   const [verSenha, setVerSenha] = useState(false);
   const signIn = useAuthStore((s) => s.signIn);
   const navigate = useNavigate();
@@ -103,6 +103,7 @@ export default function Login() {
               id="email"
               className="input"
               type="email"
+              autoComplete="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
@@ -120,6 +121,7 @@ export default function Login() {
               id="senha"
               className="input has-toggle"
               type={verSenha ? 'text' : 'password'}
+              autoComplete="current-password"
               value={senha}
               onChange={(e) => setSenha(e.target.value)}
               required
