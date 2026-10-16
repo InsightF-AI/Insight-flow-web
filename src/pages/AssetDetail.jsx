@@ -47,6 +47,7 @@ export default function AssetDetail() {
   const { data: watchlist } = useWatchlist();
   const { add, remove } = useWatchlistMutations();
   const naWatchlist = (watchlist ?? []).some((w) => w.ticker === ticker);
+  const salvandoWatchlist = add.isPending || remove.isPending;
   const [opModal, setOpModal] = useState(false);
 
   const cot = asset?.cotacao;
@@ -83,6 +84,8 @@ export default function AssetDetail() {
                   {fmtNum(cot.variacao)} ({fmtPct(cot.variacao_pct)}) hoje
                 </div>
               </>
+            ) : asset ? (
+              <div className="text-sm text-fg-3">Cotação indisponível</div>
             ) : (
               <Skeleton className="h-8 w-28" />
             )}
@@ -92,9 +95,10 @@ export default function AssetDetail() {
           </button>
           <button
             className={naWatchlist ? 'btn-ghost' : 'btn-primary'}
+            disabled={!watchlist || salvandoWatchlist}
             onClick={() => (naWatchlist ? remove.mutate(ticker) : add.mutate(ticker))}
           >
-            {naWatchlist ? 'Na watchlist' : <><Plus size={15} /> Watchlist</>}
+            {salvandoWatchlist ? 'Salvando…' : naWatchlist ? 'Na watchlist' : <><Plus size={15} /> Watchlist</>}
           </button>
         </div>
       </header>

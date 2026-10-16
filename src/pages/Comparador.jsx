@@ -41,8 +41,8 @@ function ComparadorColuna({ ticker, onRemove }) {
       ) : (
         <div>
           <div className="mb-2 truncate text-xs text-fg-3">{asset.nome}</div>
-          <Linha label="Preço" value={fmtNum(cot.preco)} />
-          <Linha label="Variação do dia" value={fmtPct(cot.variacao_pct)} tone={trendClass(cot.variacao_pct)} />
+          <Linha label="Preço" value={cot ? fmtNum(cot.preco) : '—'} />
+          <Linha label="Variação do dia" value={cot ? fmtPct(cot.variacao_pct) : '—'} tone={trendClass(cot?.variacao_pct)} />
           <Linha label="RSI (14)" value={snapshot ? fmtNum(snapshot['RSI (14)'], 1) : '—'} />
           <Linha label="Volume relativo" value={snapshot ? `${fmtNum(snapshot['Volume relativo'], 2)}×` : '—'} />
           <Linha label="Score de oportunidade" value={score ? score.score : '—'} />

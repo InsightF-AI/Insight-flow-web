@@ -81,7 +81,7 @@ function MarketChartCard({ watchlist }) {
       <div className="flex flex-wrap items-center justify-between gap-3 px-2 py-2.5">
         <div className="flex items-center gap-3">
           <span className="num text-lg font-bold text-fg-0">{ativo}</span>
-          {item && (
+          {item?.cotacao && (
             <>
               <span className="num text-sm text-fg-2">{fmtNum(item.cotacao.preco)}</span>
               <span className={`num text-sm font-semibold ${trendClass(item.cotacao.variacao_pct)}`}>
@@ -381,12 +381,12 @@ export default function Dashboard() {
                         <div className="truncate text-xs text-fg-2">{w.nome}</div>
                       </Link>
                     </td>
-                    <td className="num px-2 py-2.5 text-right text-fg-0">{fmtNum(w.cotacao.preco)}</td>
-                    <td className={`num px-2 py-2.5 text-right ${trendClass(w.cotacao.variacao_pct)}`}>
-                      {fmtPct(w.cotacao.variacao_pct)}
+                    <td className="num px-2 py-2.5 text-right text-fg-0">{w.cotacao ? fmtNum(w.cotacao.preco) : '—'}</td>
+                    <td className={`num px-2 py-2.5 text-right ${trendClass(w.cotacao?.variacao_pct)}`}>
+                      {w.cotacao ? fmtPct(w.cotacao.variacao_pct) : '—'}
                     </td>
                     <td className="hidden w-32 px-2 py-2.5 md:table-cell">
-                      <Sparkline candles={generateCandles(w.ticker)} positive={w.cotacao.variacao_pct >= 0} />
+                      <Sparkline candles={generateCandles(w.ticker)} positive={(w.cotacao?.variacao_pct ?? 0) >= 0} />
                     </td>
                     <td className="px-2 py-2.5 text-center">
                       {w.sinais > 0 ? <Pill tone="blue">{w.sinais}</Pill> : <span className="text-fg-3">—</span>}
