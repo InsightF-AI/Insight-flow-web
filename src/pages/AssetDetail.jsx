@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { ArrowLeft, CloudOff, Plus, Sparkles, Target, Radar, Gauge, BarChart3, Receipt, Landmark, Newspaper } from 'lucide-react';
-import { useAsset, useHistory, useIndicators, useSignals, useScore, useAnalysis, useWatchlist, useWatchlistMutations, useNews } from '../hooks/queries.js';
+import { ArrowLeft, CloudOff, Plus, Sparkles, Radar, Gauge, BarChart3, Receipt, Landmark } from 'lucide-react';
+import { useAsset, useHistory, useIndicators, useSignals, useAnalysis, useWatchlist, useWatchlistMutations } from '../hooks/queries.js';
 import { useMediaQuery } from '../hooks/useMediaQuery.js';
 import { useUiStore } from '../store/index.js';
 import { PERIODS } from '../api/mock/assets.js';
@@ -33,7 +33,6 @@ export default function AssetDetail() {
     isError: erroSignals,
     refetch: refazerSignals,
   } = useSignals({ ticker, apenasAtivos: false });
-  const { data: score, isError: erroScore, refetch: refazerScore } = useScore(ticker);
   const [pedirAnalise, setPedirAnalise] = useState(false);
   const {
     data: analysis,
@@ -42,11 +41,11 @@ export default function AssetDetail() {
     error: erroAIDetalhe,
     refetch: refazerAI,
   } = useAnalysis(ticker, pedirAnalise);
-  const { data: news, isError: erroNews, refetch: refazerNews } = useNews(ticker);
   const mobile = useMediaQuery('(max-width: 639px)');
   const { data: watchlist } = useWatchlist();
   const { add, remove } = useWatchlistMutations();
   const naWatchlist = (watchlist ?? []).some((w) => w.ticker === ticker);
+  const salvandoWatchlist = add.isPending || remove.isPending;
   const [opModal, setOpModal] = useState(false);
 
   const cot = asset?.cotacao;
@@ -83,6 +82,8 @@ export default function AssetDetail() {
                   {fmtNum(cot.variacao)} ({fmtPct(cot.variacao_pct)}) hoje
                 </div>
               </>
+            ) : asset ? (
+              <div className="text-sm text-fg-3">Cotação indisponível</div>
             ) : (
               <Skeleton className="h-8 w-28" />
             )}
@@ -92,12 +93,20 @@ export default function AssetDetail() {
           </button>
           <button
             className={naWatchlist ? 'btn-ghost' : 'btn-primary'}
+            disabled={!watchlist || salvandoWatchlist}
             onClick={() => (naWatchlist ? remove.mutate(ticker) : add.mutate(ticker))}
           >
-            {naWatchlist ? 'Na watchlist' : <><Plus size={15} /> Watchlist</>}
+            {salvandoWatchlist ? 'Salvando…' : naWatchlist ? 'Na watchlist' : <><Plus size={15} /> Watchlist</>}
           </button>
         </div>
       </header>
+
+      {watchlist && !naWatchlist && (
+        <p className="rounded-sm border border-border-soft bg-elevated px-4 py-3 text-xs text-fg-2">
+          Este ativo não está na sua watchlist: cotação, histórico, indicadores e sinais abaixo são ilustrativos.
+          Adicione-o à watchlist para ver os dados reais.
+        </p>
+      )}
 
       <OperationModal open={opModal} onClose={() => setOpModal(false)} initialTicker={ticker} />
 
@@ -200,7 +209,6 @@ export default function AssetDetail() {
                       <span className="text-xs text-fg-3">
                         {s.data_desativacao ? `encerrado há ${sinceNow(s.data_desativacao)}` : `ativo há ${sinceNow(s.data_ativacao)}`}
                       </span>
-                      <span className="ml-auto text-xs text-fg-3">peso {fmtNum(s.regra.peso, 2)}</span>
                     </div>
                     <p className="mt-2">{s.regra.descricao}</p>
                     <div className="mt-3 flex flex-wrap gap-x-6 gap-y-1">
@@ -231,26 +239,6 @@ export default function AssetDetail() {
         </div>
 
         <div className="grid content-start gap-6">
-          <Card title={<SectionTitle icon={Target}>Score de oportunidade</SectionTitle>}>
-            {erroScore ? (
-              <ErrorState onRetry={refazerScore} />
-            ) : score ? (
-              <div className="flex items-center gap-4">
-                <div className="num text-4xl font-extrabold text-fg-0">{score.score}</div>
-                <div className="flex-1">
-                  <div className="h-2 overflow-hidden rounded-full bg-muted">
-                    <div className="h-full rounded-full bg-accent transition-all" style={{ width: `${score.score}%` }} />
-                  </div>
-                  <p className="mt-2 text-xs">
-                    Soma ponderada dos {score.sinais} sinais ativos. Indicador técnico agregado, não recomendação.
-                  </p>
-                </div>
-              </div>
-            ) : (
-              <Skeleton className="h-12" />
-            )}
-          </Card>
-
           {asset?.fundamentos && (
             <Card title={<SectionTitle icon={Landmark} tone="amber">Indicadores fundamentalistas</SectionTitle>}>
               <dl className="grid grid-cols-2 gap-3 text-sm">
@@ -363,29 +351,6 @@ export default function AssetDetail() {
               </dl>
             ) : (
               <Skeleton className="h-16" />
-            )}
-          </Card>
-
-          <Card title={<SectionTitle icon={Newspaper}>Notícias</SectionTitle>} bodyClass="p-0">
-            {erroNews ? (
-              <ErrorState onRetry={refazerNews} />
-            ) : !news ? (
-              <div className="grid gap-2 p-4">
-                <Skeleton /> <Skeleton /> <Skeleton className="h-4 w-2/3" />
-              </div>
-            ) : news.length === 0 ? (
-              <Empty>Nenhuma notícia recente para este ativo.</Empty>
-            ) : (
-              <ul>
-                {news.map((n) => (
-                  <li key={n.id} className="border-b border-border-soft px-4 py-3 last:border-0">
-                    <p className="text-sm text-fg-1">{n.titulo}</p>
-                    <p className="mt-1 text-xs text-fg-3">
-                      {n.fonte} · há {sinceNow(n.data)}
-                    </p>
-                  </li>
-                ))}
-              </ul>
             )}
           </Card>
         </div>

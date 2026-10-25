@@ -10,10 +10,6 @@ export const useHistory = (t, p) =>
 export const useIndicators = (t) =>
   useQuery({ queryKey: ['indicators', t], queryFn: () => api.getIndicatorSnapshot(t), enabled: !!t });
 export const useSignals = (params) => useQuery({ queryKey: ['signals', params], queryFn: () => api.getSignals(params) });
-export const useScore = (t) => useQuery({ queryKey: ['score', t], queryFn: () => api.getScore(t), enabled: !!t });
-export const useTopMovers = () => useQuery({ queryKey: ['topMovers'], queryFn: () => api.getTopMovers() });
-export const useRankings = () => useQuery({ queryKey: ['rankings'], queryFn: () => api.getRankings() });
-export const useNews = (ticker) => useQuery({ queryKey: ['news', ticker ?? 'all'], queryFn: () => api.getNews(ticker) });
 export const useSearch = (termo) => useQuery({ queryKey: ['search', termo], queryFn: () => api.searchAssets(termo) });
 export const useOperations = () => useQuery({ queryKey: ['operations'], queryFn: () => api.getOperations() });
 export const usePositions = () => useQuery({ queryKey: ['positions'], queryFn: () => api.getPositions() });
@@ -87,11 +83,17 @@ export function useDeleteOperation() {
 
 export function useWatchlistMutations() {
   const qc = useQueryClient();
+  const pushToast = useToastStore((s) => s.push);
+  // onSettled retorna a promise: a mutation só sai de isPending quando a lista já recarregou, então o
+  // botão não volta ao estado antigo (e aceita outro clique) entre a chamada e o refetch. Recarrega
+  // também no erro (ex: 502 do proxy depois de o servidor ter aplicado a mudança), pra tela refletir o real.
   const inv = () => qc.invalidateQueries({ queryKey: ['watchlist'] });
+  const avisarErro = (acao) => (err, ticker) =>
+    pushToast({ titulo: `${ticker} — não foi possível ${acao}`, texto: err.message, link: `/ativo/${ticker}` });
   return {
-    add: useMutation({ mutationFn: (t) => api.addToWatchlist(t), onSuccess: inv }),
-    remove: useMutation({ mutationFn: (t) => api.removeFromWatchlist(t), onSuccess: inv }),
-    toggle: useMutation({ mutationFn: (t) => api.toggleNotify(t), onSuccess: inv }),
+    add: useMutation({ mutationFn: (t) => api.addToWatchlist(t), onSettled: inv, onError: avisarErro('adicionar à watchlist') }),
+    remove: useMutation({ mutationFn: (t) => api.removeFromWatchlist(t), onSettled: inv, onError: avisarErro('remover da watchlist') }),
+    toggle: useMutation({ mutationFn: (t) => api.toggleNotify(t), onSettled: inv, onError: avisarErro('alterar as notificações') }),
   };
 }
 
@@ -109,17 +111,4 @@ export function useMarkAllAlertsRead() {
     mutationFn: () => api.markAllAlertsRead(),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['alerts'] }),
   });
-}
-
-export const useSessions = () => useQuery({ queryKey: ['sessions'], queryFn: () => api.getSessions() });
-
-export function useAccountMutations() {
-  const qc = useQueryClient();
-  const invSessions = () => qc.invalidateQueries({ queryKey: ['sessions'] });
-  return {
-    updateProfile: useMutation({ mutationFn: (p) => api.updateProfile(p) }),
-    changePassword: useMutation({ mutationFn: (p) => api.changePassword(p) }),
-    revokeSession: useMutation({ mutationFn: (id) => api.revokeSession(id), onSuccess: invSessions }),
-    revokeOtherSessions: useMutation({ mutationFn: () => api.revokeOtherSessions(), onSuccess: invSessions }),
-  };
 }

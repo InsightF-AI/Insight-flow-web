@@ -1,12 +1,11 @@
 /**
  * Camada de acesso a dados — ponto único de integração com o backend FastAPI (`/api/v1`,
  * via proxy do Vite). O que a API expõe vem dela; o que ela ainda não expõe (notícias,
- * rankings, score, sessões, perfil) continua em mock em memória, marcado nos métodos.
+ * rankings, score) fica fora da tela até o backend ter a rota.
  */
-import { ASSETS, byTicker, generateCandles } from './mock/assets.js';
+import { byTicker, generateCandles } from './mock/assets.js';
 import { RULES, SIGNALS, BACKTESTS, ruleOf } from './mock/signals.js';
 import { DISCLAIMER } from './mock/ai.js';
-import { NEWS } from './mock/news.js';
 import { computeIndicators, lastDefined } from '../lib/indicators.js';
 import { fmtBRL, fmtPct, fmtNum } from '../lib/format.js';
 import { useAuthStore, useUiStore } from '../store/index.js';
@@ -93,10 +92,12 @@ async function apiFetch(path, options = {}, tentouRenovar = false) {
 /** RNF-10 — ponto único de latência simulada (300–800 ms) e do alternador "Forçar erro"
  * (Configurações → Modo desenvolvedor). Usado só pelos métodos de leitura (os que alimentam
  * useQuery/skeletons) — mutações mantêm seus próprios delays e ficam fora do toggle, pra não
- * travar ações como login/criação enquanto se testa o estado de erro de uma tela. */
+ * travar ações como login/criação enquanto se testa o estado de erro de uma tela.
+ * Os alternadores só valem em dev: num build publicado, um valor persistido no navegador não tem
+ * mais onde ser desligado (o card some), então é ignorado. */
 const delayRead = async () => {
   await delay(300 + Math.random() * 500);
-  if (useUiStore.getState().forcarErro) {
+  if (import.meta.env.DEV && useUiStore.getState().forcarErro) {
     throw new Error('Falha ao carregar os dados. Verifique sua conexão e tente novamente.');
   }
 };
@@ -240,17 +241,12 @@ async function fetchRealCandlesEIndicadores(ativoId) {
     .sort((a, b) => a.time.localeCompare(b.time));
   return { candles, ind: computeIndicators(candles) };
 }
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 let readAlerts = new Set();
-const hAgo = (n) => new Date(Date.now() - n * 3600_000).toISOString();
-let sessions = [
-  { id: 'se1', dispositivo: 'Chrome · Windows', local: 'São Paulo, BR', atual: true, ultimo_acesso: new Date().toISOString() },
-  { id: 'se2', dispositivo: 'App · iPhone', local: 'São Paulo, BR', atual: false, ultimo_acesso: hAgo(6) },
-  { id: 'se3', dispositivo: 'Edge · Windows', local: 'Campinas, BR', atual: false, ultimo_acesso: hAgo(72) },
-];
 
+// null para ticker fora do universo mockado (ex: PETR4F, que só existe na API) — sem série pra simular.
 const quoteOf = (ticker) => {
   const candles = generateCandles(ticker);
+  if (candles.length < 2) return null;
   const last = candles[candles.length - 1];
   const prev = candles[candles.length - 2];
   const variacao = last.close - prev.close;
@@ -300,39 +296,6 @@ export const api = {
     // logout é best-effort: mesmo se o backend falhar, a sessão local é encerrada por quem chamou.
     await apiFetch('/auth/logout', { method: 'POST', body: JSON.stringify({ refresh_token: refreshToken }) }).catch(() => {});
   },
-  async recoverPassword({ email }) {
-    await delay(520);
-    if (!EMAIL_RE.test((email || '').trim())) throw new Error('Informe um e-mail válido.');
-    // Resposta sempre genérica — não revela se o e-mail está cadastrado.
-    return { ok: true };
-  },
-  async updateProfile({ nome, email }) {
-    await delay(420);
-    if (!nome?.trim()) throw new Error('Informe seu nome.');
-    if (!email?.includes('@')) throw new Error('Informe um e-mail válido.');
-    return { nome: nome.trim(), email: email.trim() };
-  },
-  async changePassword({ atual, nova }) {
-    await delay(480);
-    if (!atual) throw new Error('Informe sua senha atual.');
-    if (!nova || nova.length < 8) throw new Error('A nova senha precisa ter ao menos 8 caracteres.');
-    return { ok: true };
-  },
-  async getSessions() {
-    await delayRead();
-    return [...sessions].sort((a, b) => Number(b.atual) - Number(a.atual));
-  },
-  async revokeSession(id) {
-    await delay(260);
-    sessions = sessions.filter((s) => s.id !== id);
-    return { ok: true };
-  },
-  async revokeOtherSessions() {
-    await delay(340);
-    sessions = sessions.filter((s) => s.atual);
-    return { ok: true };
-  },
-
   /* ----- ativos (RF-04, RF-05, RF-06) ----- */
   async searchAssets(termo) {
     const t = (termo || '').trim();
@@ -340,7 +303,7 @@ export const api = {
     if (!t) return [];
     // a busca real não devolve preço (só a cotação por ativo_id tem isso, e resultado de busca
     // ainda não tem um ativo_id — só ganha um ao ser adicionado à watchlist). SearchPage.jsx
-    // mostra 0,00 na coluna de preço pra esses itens até lá.
+    // mostra "—" na coluna de preço pra esses itens até lá.
     return apiFetch(`/ativos/buscar?termo=${encodeURIComponent(t)}`);
   },
   async getAsset(ticker) {
@@ -351,7 +314,8 @@ export const api = {
       if (!asset) throw new Error('Ativo não encontrado.');
       return { ...asset, cotacao: quoteOf(asset.ticker) };
     }
-    const cot = await apiFetch(`/ativos/${cached.id}/cotacao`);
+    // cotação fora do ar (503 da fonte de mercado) não derruba a tela do ativo: o cabeçalho mostra "—".
+    const cot = await apiFetch(`/ativos/${cached.id}/cotacao`).catch(() => null);
     return {
       ticker,
       nome: cached.nome,
@@ -359,7 +323,7 @@ export const api = {
       setor: cached.setor,
       moeda: cached.moeda,
       fonte: cached.tipo === 'CRIPTO' ? 'Binance' : 'brapi',
-      cotacao: mapCotacao(ticker, cot),
+      cotacao: cot ? mapCotacao(ticker, cot) : null,
     };
   },
   async getQuotes(tickers) {
@@ -469,51 +433,6 @@ export const api = {
     await delay(140);
     return RULES;
   },
-  async getScore(ticker) {
-    await delayRead();
-    const ativos = SIGNALS.filter((s) => s.ticker === ticker && !s.data_desativacao);
-    const soma = ativos.reduce((a, s) => a + (ruleOf(s.regra_id)?.peso ?? 0), 0);
-    return { score: +Math.min(soma * 100, 100).toFixed(0), sinais: ativos.length };
-  },
-  async getTopMovers(limit = 5) {
-    await delayRead();
-    const quotes = ASSETS.map((a) => ({ ...quoteOf(a.ticker), nome: a.nome, tipo: a.tipo }));
-    return {
-      altas: [...quotes].sort((a, b) => b.variacao_pct - a.variacao_pct).slice(0, limit),
-      baixas: [...quotes].sort((a, b) => a.variacao_pct - b.variacao_pct).slice(0, limit),
-    };
-  },
-  /** Rankings de mercado (RF-05 a RF-08) — altas, baixas, volume relativo e sinais, no estilo dos rankings do investidor10. */
-  async getRankings(limit = 6) {
-    await delayRead();
-    const quotes = ASSETS.map((a) => ({ ...quoteOf(a.ticker), nome: a.nome, tipo: a.tipo }));
-    const comIndicadores = ASSETS.map((a) => {
-      const ind = computeIndicators(generateCandles(a.ticker));
-      return { ticker: a.ticker, nome: a.nome, tipo: a.tipo, volRel: lastDefined(ind.volRel) ?? 0 };
-    });
-    const comSinais = ASSETS.map((a) => ({
-      ticker: a.ticker,
-      nome: a.nome,
-      tipo: a.tipo,
-      sinais: SIGNALS.filter((s) => s.ticker === a.ticker && !s.data_desativacao).length,
-    }));
-    return {
-      altas: [...quotes].sort((a, b) => b.variacao_pct - a.variacao_pct).slice(0, limit),
-      baixas: [...quotes].sort((a, b) => a.variacao_pct - b.variacao_pct).slice(0, limit),
-      volume: [...comIndicadores].sort((a, b) => b.volRel - a.volRel).slice(0, limit),
-      sinais: comSinais
-        .filter((s) => s.sinais > 0)
-        .sort((a, b) => b.sinais - a.sinais)
-        .slice(0, limit),
-    };
-  },
-  /** Notícias de mercado (opcionalmente filtradas por ativo). */
-  async getNews(ticker, limit = 8) {
-    await delayRead();
-    return NEWS.filter((n) => !ticker || n.ticker === ticker)
-      .sort((a, b) => b.data.localeCompare(a.data))
-      .slice(0, limit);
-  },
 
   /* ----- watchlist (RF-03, RN-08) ----- */
   async getWatchlist() {
@@ -523,10 +442,11 @@ export const api = {
         const sinais = await apiFetch(`/ativos/${it.ativo.id}/sinais`)
           .then((lista) => lista.filter((s) => !s.data_desativacao).length)
           .catch(() => 0);
-        // se a cotação real falhar (ex: BrAPI fora do ar, 503), cai pro mock em vez de quebrar a lista inteira.
+        // se a cotação real falhar (ex: BrAPI fora do ar, 503), fica null em vez de quebrar a lista inteira
+        // — a UI mostra "—", como na tela do ativo (um preço simulado aqui passaria por real).
         const cotacao = await apiFetch(`/ativos/${it.ativo.id}/cotacao`)
           .then((cot) => mapCotacao(it.ativo.ticker, cot))
-          .catch(() => quoteOf(it.ativo.ticker));
+          .catch(() => null);
         return {
           ticker: it.ativo.ticker,
           nome: it.ativo.nome,
@@ -542,12 +462,23 @@ export const api = {
     );
   },
   async addToWatchlist(ticker) {
-    await apiFetch('/watchlist', { method: 'POST', body: JSON.stringify({ ticker }) });
+    try {
+      await apiFetch('/watchlist', { method: 'POST', body: JSON.stringify({ ticker }) });
+    } catch (err) {
+      // 409 = já está na watchlist (ex: clique duplo, ou a lista na tela ainda não tinha recarregado).
+      if (err.status !== 409) throw err;
+    }
     return { ok: true };
   },
   async removeFromWatchlist(ticker) {
-    const entry = watchlistIndex.get(ticker);
-    await apiFetch(`/watchlist/${entry.id}`, { method: 'DELETE' });
+    const entry = await resolverAtivoCache(ticker);
+    if (!entry) return { ok: true };
+    try {
+      await apiFetch(`/watchlist/${entry.id}`, { method: 'DELETE' });
+    } catch (err) {
+      // 404 = já tinha saído da watchlist (ex: removido em outra aba).
+      if (err.status !== 404) throw err;
+    }
     watchlistIndex.delete(ticker);
     return { ok: true };
   },
@@ -843,7 +774,7 @@ export const api = {
       };
     }
     await delay(900);
-    if (useUiStore.getState().iaIndisponivel) {
+    if (import.meta.env.DEV && useUiStore.getState().iaIndisponivel) {
       throw new Error('Serviço de análise por IA temporariamente indisponível.');
     }
     return {

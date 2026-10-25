@@ -1,24 +1,10 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import {
-  Bell,
-  BellOff,
-  Bug,
-  Download,
-  Info,
-  LogOut,
-  Monitor,
-  Moon,
-  Palette,
-  Shield,
-  Smartphone,
-  Sun,
-  User,
-} from 'lucide-react';
+import { Bell, BellOff, Bug, Download, Info, Moon, Palette, Sun, User } from 'lucide-react';
 import { useAuthStore, useUiStore } from '../store/index.js';
-import { useWatchlist, useWatchlistMutations, usePositions, useOperations, useSessions, useAccountMutations } from '../hooks/queries.js';
-import { Card, Pill, SectionTitle, Skeleton, Empty, ErrorState } from './ui.jsx';
-import { fmtDate, sinceNow } from '../lib/format.js';
+import { useWatchlist, useWatchlistMutations, usePositions, useOperations } from '../hooks/queries.js';
+import { Card, SectionTitle, Skeleton, Empty, ErrorState } from './ui.jsx';
+import { fmtDate } from '../lib/format.js';
 import { ativarWebPush, desativarWebPush } from '../lib/webPush.js';
 
 function Toggle({ label, hint, value, onChange }) {
@@ -41,21 +27,14 @@ function Toggle({ label, hint, value, onChange }) {
   );
 }
 
+/** A API ainda não tem rota para alterar nome, e-mail ou senha — o card só mostra a conta. */
 function PerfilCard() {
-  const { usuario, updateUsuario } = useAuthStore();
-  const { updateProfile } = useAccountMutations();
-  const [form, setForm] = useState({ nome: usuario?.nome ?? '', email: usuario?.email ?? '' });
-  const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
+  const { usuario } = useAuthStore();
   const inicial = (usuario?.nome ?? 'U').charAt(0).toUpperCase();
-
-  const submit = (e) => {
-    e.preventDefault();
-    updateProfile.mutate(form, { onSuccess: (d) => updateUsuario(d) });
-  };
 
   return (
     <Card title={<SectionTitle icon={User}>Perfil</SectionTitle>}>
-      <div className="mb-5 flex items-center gap-3">
+      <div className="flex items-center gap-3">
         <div className="grid h-14 w-14 shrink-0 place-items-center rounded-full bg-accent text-xl font-bold text-base">
           {inicial}
         </div>
@@ -64,25 +43,9 @@ function PerfilCard() {
           <div className="truncate text-xs text-fg-3">{usuario?.email}</div>
         </div>
       </div>
-      <form className="grid gap-4 sm:grid-cols-2" onSubmit={submit}>
-        <div>
-          <label className="label" htmlFor="perfil-nome">Nome</label>
-          <input id="perfil-nome" className="input" value={form.nome} onChange={set('nome')} required />
-        </div>
-        <div>
-          <label className="label" htmlFor="perfil-email">E-mail</label>
-          <input id="perfil-email" className="input" type="email" value={form.email} onChange={set('email')} required />
-        </div>
-        <div className="flex items-center gap-3 sm:col-span-2">
-          <button className="btn-primary" disabled={updateProfile.isPending}>
-            {updateProfile.isPending ? 'Salvando…' : 'Salvar alterações'}
-          </button>
-          {updateProfile.isSuccess && (
-            <span className="fade-in text-xs font-semibold text-up">Perfil atualizado.</span>
-          )}
-          {updateProfile.isError && <span className="text-xs text-down">{updateProfile.error.message}</span>}
-        </div>
-      </form>
+      <p className="mt-4 text-xs text-fg-3">
+        Alterar nome, e-mail ou senha ainda não está disponível nesta versão.
+      </p>
     </Card>
   );
 }
@@ -125,109 +88,6 @@ function AparenciaCard() {
   );
 }
 
-function SegurancaCard() {
-  const { changePassword, revokeSession, revokeOtherSessions } = useAccountMutations();
-  const { data: sessions, isLoading, isError, refetch } = useSessions();
-  const [form, setForm] = useState({ atual: '', nova: '', confirmar: '' });
-  const [erroLocal, setErroLocal] = useState('');
-  const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
-
-  const submit = (e) => {
-    e.preventDefault();
-    setErroLocal('');
-    if (form.nova !== form.confirmar) {
-      setErroLocal('A confirmação não coincide com a nova senha.');
-      return;
-    }
-    changePassword.mutate(
-      { atual: form.atual, nova: form.nova },
-      { onSuccess: () => setForm({ atual: '', nova: '', confirmar: '' }) },
-    );
-  };
-
-  const erro = erroLocal || changePassword.error?.message;
-  const outras = (sessions ?? []).filter((s) => !s.atual);
-
-  return (
-    <Card title={<SectionTitle icon={Shield}>Segurança</SectionTitle>}>
-      <form className="grid gap-4 border-b border-border-soft pb-5 sm:grid-cols-3" onSubmit={submit}>
-        <div>
-          <label className="label" htmlFor="senha-atual">Senha atual</label>
-          <input id="senha-atual" className="input" type="password" value={form.atual} onChange={set('atual')} required />
-        </div>
-        <div>
-          <label className="label" htmlFor="senha-nova">Nova senha</label>
-          <input id="senha-nova" className="input" type="password" minLength={8} value={form.nova} onChange={set('nova')} required />
-        </div>
-        <div>
-          <label className="label" htmlFor="senha-conf">Confirmar nova senha</label>
-          <input id="senha-conf" className="input" type="password" value={form.confirmar} onChange={set('confirmar')} required />
-        </div>
-        <div className="flex items-center gap-3 sm:col-span-3">
-          <button className="btn-primary" disabled={changePassword.isPending}>
-            {changePassword.isPending ? 'Atualizando…' : 'Atualizar senha'}
-          </button>
-          {changePassword.isSuccess && !erro && (
-            <span className="fade-in text-xs font-semibold text-up">Senha atualizada.</span>
-          )}
-          {erro && <span className="text-xs text-down">{erro}</span>}
-        </div>
-      </form>
-
-      <div className="pt-4">
-        <h4 className="mb-1 text-sm font-semibold text-fg-1">Sessões ativas</h4>
-        <p className="mb-3 text-xs text-fg-3">Dispositivos conectados à sua conta nesta versão de demonstração.</p>
-        {isLoading ? (
-          <div className="grid gap-2">
-            <Skeleton className="h-12" /> <Skeleton className="h-12" />
-          </div>
-        ) : isError ? (
-          <ErrorState message="Não foi possível carregar as sessões." onRetry={refetch} />
-        ) : (
-          <ul>
-            {(sessions ?? []).map((s) => (
-              <li key={s.id} className="flex items-center gap-3 border-b border-border-soft py-3 last:border-0">
-                <div className="grid h-9 w-9 shrink-0 place-items-center rounded-sm bg-elevated text-fg-2">
-                  {s.dispositivo.toLowerCase().includes('iphone') || s.dispositivo.toLowerCase().includes('app') ? (
-                    <Smartphone size={16} />
-                  ) : (
-                    <Monitor size={16} />
-                  )}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2 text-sm font-medium text-fg-1">
-                    {s.dispositivo}
-                    {s.atual && <Pill tone="green">Sessão atual</Pill>}
-                  </div>
-                  <div className="text-xs text-fg-3">
-                    {s.local} · último acesso há {sinceNow(s.ultimo_acesso)}
-                  </div>
-                </div>
-                {!s.atual && (
-                  <button
-                    onClick={() => revokeSession.mutate(s.id)}
-                    className="btn-ghost shrink-0 px-3 py-1.5 text-xs"
-                  >
-                    Encerrar
-                  </button>
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
-        {outras.length > 0 && (
-          <button
-            onClick={() => revokeOtherSessions.mutate()}
-            className="mt-3 flex items-center gap-1.5 text-xs font-semibold text-down"
-          >
-            <LogOut size={13} /> Encerrar todas as outras sessões
-          </button>
-        )}
-      </div>
-    </Card>
-  );
-}
-
 function DadosCard({ usuario, watchlist, posicoes, operacoes }) {
   const exportar = () => {
     const payload = {
@@ -252,7 +112,7 @@ function DadosCard({ usuario, watchlist, posicoes, operacoes }) {
         <div>
           <div className="text-sm font-medium text-fg-1">Exportar meus dados</div>
           <p className="mt-0.5 text-xs text-fg-3">
-            Baixa um arquivo JSON com watchlist, posições e operações registradas nesta demonstração.
+            Baixa um arquivo JSON com sua watchlist, posições e operações registradas.
           </p>
         </div>
         <button onClick={exportar} className="btn-ghost">
@@ -268,10 +128,6 @@ export default function SettingsPanel() {
   const { usuario } = useAuthStore();
   const {
     notificacoesPush,
-    notificacoesEmail,
-    notificacoesMobile,
-    notificacoesDesktop,
-    resumoDiario,
     iaIndisponivel,
     forcarErro,
     setFlag,
@@ -314,7 +170,6 @@ export default function SettingsPanel() {
     <div className="grid gap-6">
       <PerfilCard />
       <AparenciaCard />
-      <SegurancaCard />
 
       <Card title={<SectionTitle icon={Bell}>Notificações</SectionTitle>}>
         <Toggle
@@ -332,30 +187,6 @@ export default function SettingsPanel() {
         {erroWebPush && (
           <p className="-mt-2 pb-3.5 text-xs text-down">Não foi possível ativar o web push no servidor: {erroWebPush}</p>
         )}
-        <Toggle
-          label="E-mail"
-          hint="Resumo de sinais e disparos de alerta por e-mail."
-          value={notificacoesEmail}
-          onChange={(v) => setFlag('notificacoesEmail', v)}
-        />
-        <Toggle
-          label="Notificação mobile"
-          hint="Push no aplicativo, quando instalado."
-          value={notificacoesMobile}
-          onChange={(v) => setFlag('notificacoesMobile', v)}
-        />
-        <Toggle
-          label="Bandeja do Windows"
-          hint="Notificações nativas do sistema operacional."
-          value={notificacoesDesktop}
-          onChange={(v) => setFlag('notificacoesDesktop', v)}
-        />
-        <Toggle
-          label="Resumo diário"
-          hint="Resumo textual da carteira como primeira notificação do dia."
-          value={resumoDiario}
-          onChange={(v) => setFlag('resumoDiario', v)}
-        />
       </Card>
 
       <Card title={<SectionTitle icon={Bell} tone="blue">Notificações por ativo</SectionTitle>} bodyClass="p-0">
@@ -394,26 +225,29 @@ export default function SettingsPanel() {
 
       <DadosCard usuario={usuario} watchlist={watchlist} posicoes={posicoes} operacoes={operacoes} />
 
-      <Card title={<SectionTitle icon={Bug} tone="amber">Modo desenvolvedor</SectionTitle>}>
-        <Toggle
-          label="Simular IA indisponível"
-          hint="UC-03 (fluxo alternativo): a análise por ativo e o resumo diário passam a sinalizar indisponibilidade, sem quebrar a tela — os dados numéricos continuam aparecendo normalmente."
-          value={iaIndisponivel}
-          onChange={(v) => setFlag('iaIndisponivel', v)}
-        />
-        <Toggle
-          label="Forçar erro de carregamento"
-          hint="RNF-10: as consultas de leitura (watchlist, portfólio, rankings, alertas etc.) passam a falhar, para demonstrar o estado de erro com nova tentativa em cada tela. Ações de escrita (login, criar operação/alerta) não são afetadas."
-          value={forcarErro}
-          onChange={(v) => setFlag('forcarErro', v)}
-        />
-      </Card>
+      {/* só em `npm run dev`: num build publicado os alternadores não têm efeito (ver delayRead). */}
+      {import.meta.env.DEV && (
+        <Card title={<SectionTitle icon={Bug} tone="amber">Modo desenvolvedor</SectionTitle>}>
+          <Toggle
+            label="Simular IA indisponível"
+            hint="UC-03 (fluxo alternativo): a análise por ativo e o resumo diário passam a sinalizar indisponibilidade, sem quebrar a tela — os dados numéricos continuam aparecendo normalmente."
+            value={iaIndisponivel}
+            onChange={(v) => setFlag('iaIndisponivel', v)}
+          />
+          <Toggle
+            label="Forçar erro de carregamento"
+            hint="RNF-10: as consultas de leitura (watchlist, portfólio, alertas etc.) passam a falhar, para demonstrar o estado de erro com nova tentativa em cada tela. Ações de escrita (login, criar operação/alerta) não são afetadas."
+            value={forcarErro}
+            onChange={(v) => setFlag('forcarErro', v)}
+          />
+        </Card>
+      )}
 
       <Card title={<SectionTitle icon={Info}>Sobre esta versão</SectionTitle>}>
         <p>
-          Cliente web em React + Vite consumindo uma camada de dados mockada em memória. Todos os indicadores são
-          calculados no navegador a partir de séries OHLCV sintéticas e determinísticas. Nenhuma operação real é
-          executada e nenhuma chamada a provedor de IA é feita.
+          Cliente web em React + Vite integrado à API do InsightFlow: watchlist, cotações, histórico, indicadores,
+          sinais, alertas, carteira simulada, notificações e IA vêm do servidor. Rankings, notícias e o score de
+          oportunidade ficam de fora até a API ter essas rotas. Nenhuma ordem real é enviada a corretora.
         </p>
       </Card>
     </div>

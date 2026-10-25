@@ -1,8 +1,8 @@
-# Sistema de Análise de Ativos — cliente web (v1, dados mockados)
+# Sistema de Análise de Ativos — cliente web
 
-Cliente web do Sistema de Análise de Ativos do Mercado Financeiro (documentação técnica v1.0, agosto/2026).
-Esta versão implementa todas as telas do cliente web sobre uma **camada de dados mockada em memória** — sem backend,
-sem chamadas a APIs externas e sem chamadas a provedor de LLM.
+Cliente web do Sistema de Análise de Ativos do Mercado Financeiro (documentação técnica v1.0, agosto/2026),
+integrado à API do InsightFlow (FastAPI). O que a API ainda não oferece aparece na tela com o selo **Ilustrativo**
+(ver [O que vem da API](#o-que-vem-da-api)).
 
 ## Stack
 
@@ -21,12 +21,15 @@ sem chamadas a APIs externas e sem chamadas a provedor de LLM.
 ## Rodar localmente
 
 ```bash
-cd web
 npm install
+cp .env.example .env.local   # VITE_API_URL = raiz da API que o proxy do Vite vai usar
 npm run dev
+npm test                      # vitest (o CI roda antes de cada deploy)
 ```
 
-Login: qualquer e-mail válido e qualquer senha (o formulário já vem pré-preenchido).
+Login com uma conta da API apontada em `VITE_API_URL` (ou crie uma em *Criar cadastro*). Em `npm run dev`,
+Configurações tem um card **Modo desenvolvedor** (simular IA indisponível e erro de carregamento); ele não existe
+no build publicado.
 
 ## Deploy em container
 
@@ -75,10 +78,10 @@ web/
         ├── Dashboard.jsx     # KPIs, watchlist, resumo diário, sinais ativos
         ├── AssetDetail.jsx   # candles, RSI, MACD, sinais + backtest, análise IA, score
         ├── Portfolio.jsx     # posições, benchmarks, distribuição, operações
-        ├── Chat.jsx          # chat com function calling simulado
+        ├── Chat.jsx          # chat com a IA do backend (POST /chat)
         ├── Alerts.jsx        # alertas com contexto histórico de 24 meses
         ├── SearchPage.jsx    # busca e inclusão na watchlist
-        └── Settings.jsx      # conta, notificações globais e por ativo
+        └── Settings.jsx      # conta, aparência, web push e notificações por ativo
 ```
 
 ## Rastreabilidade com a documentação
@@ -96,31 +99,25 @@ web/
 | RF-16, RN-01, RN-05 (aviso legal, linguagem factual) | `components/Disclaimer.jsx` — presente em toda saída de IA |
 | RN-04 (portfólio simulado) | avisado no cabeçalho do Portfólio |
 
-## Trocar o mock pelo backend real
+## O que vem da API
 
-Todo o acesso a dados passa por `src/api/client.js`. Cada método corresponde a um endpoint do FastAPI:
-substitua o corpo por `fetch` e o restante da aplicação não muda.
+Todo o acesso a dados passa por `src/api/client.js`.
 
-```js
-const base = import.meta.env.VITE_API_URL;
-const auth = () => ({ Authorization: `Bearer ${useAuthStore.getState().token}` });
+| Vem da API | Ainda ilustrativo (selo na tela) | Não disponível (a tela avisa) |
+|---|---|---|
+| cadastro, login, refresh e logout | rankings e maiores altas/baixas | alterar nome, e-mail ou senha |
+| watchlist, busca, cotação, histórico, indicadores | notícias | recuperação de senha por e-mail |
+| sinais e backtest, alertas, notificações (REST + WebSocket), web push | score de oportunidade (a API não expõe o peso das regras) | |
+| operações, posições, rentabilidade, benchmarks, distribuição | | |
+| análise por IA e chat | | |
 
-async getWatchlist() {
-  const r = await fetch(`${base}/watchlist`, { headers: auth() });
-  if (!r.ok) throw new Error('Falha ao carregar watchlist');
-  return r.json();
-}
-```
+A API só dá um `ativo_id` a um ativo depois que ele entra na watchlist. Por isso, na tela de um ativo fora da
+watchlist, cotação, histórico, indicadores e sinais são ilustrativos, e a tela avisa. Se a cotação real falhar
+(503 da fonte de mercado), a tela mostra "Cotação indisponível" em vez de travar.
 
-Pontos de atenção na migração:
+Pontos de atenção:
 
-1. **Indicadores** — hoje calculados no cliente (`lib/indicators.js`). No backend, o `IndicadorService` já retorna os
-   valores; use `lib/indicators.js` apenas como referência de cálculo ou remova.
-2. **Séries OHLCV** — `generateCandles()` é sintético e determinístico. Substituir por `GET /ativos/{ticker}/historico`.
-3. **IA** — `getAssetAnalysis`, `getDailySummary` e `askAI` retornam fixtures. Apontar para os endpoints do
-   `AnaliseIAService`; a UI já trata estado de carregamento e exibe o aviso legal.
-4. **Notificações** — a v1 lista alertas por polling do TanStack Query. Para push real, conectar WebSocket/SSE e
-   invalidar `['alerts']` no recebimento.
-5. **Sessão** — o token JWT é persistido no `localStorage` via Zustand. Implementar refresh token conforme RNF-04.
-6. **Escala do gráfico** — `PriceChart` usa a API do Lightweight Charts 4 (`addCandlestickSeries`). Ao subir para a
+1. **Indicadores**: o snapshot vem de `GET /ativos/{id}/indicadores`; a série por candle dos gráficos é calculada
+   no cliente (`lib/indicators.js`) sobre o histórico real.
+2. **Escala do gráfico**: `PriceChart` usa a API do Lightweight Charts 4 (`addCandlestickSeries`). Ao subir para a
    v5, trocar por `addSeries(CandlestickSeries, …)`.

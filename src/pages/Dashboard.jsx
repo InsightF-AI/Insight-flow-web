@@ -11,7 +11,6 @@ import {
   Activity,
   Radar,
   LineChart as LineChartIcon,
-  Newspaper,
   Landmark,
   Bitcoin,
   ChevronRight,
@@ -24,8 +23,6 @@ import {
   useDailySummary,
   useWatchlistMutations,
   useHistory,
-  useTopMovers,
-  useNews,
 } from '../hooks/queries.js';
 import { useMediaQuery } from '../hooks/useMediaQuery.js';
 import { generateCandles, PERIODS } from '../api/mock/assets.js';
@@ -81,7 +78,7 @@ function MarketChartCard({ watchlist }) {
       <div className="flex flex-wrap items-center justify-between gap-3 px-2 py-2.5">
         <div className="flex items-center gap-3">
           <span className="num text-lg font-bold text-fg-0">{ativo}</span>
-          {item && (
+          {item?.cotacao && (
             <>
               <span className="num text-sm text-fg-2">{fmtNum(item.cotacao.preco)}</span>
               <span className={`num text-sm font-semibold ${trendClass(item.cotacao.variacao_pct)}`}>
@@ -111,80 +108,6 @@ function MarketChartCard({ watchlist }) {
             <RsiChart candles={hist.candles} values={hist.indicators.rsi14} height={mobile ? 70 : 90} />
           </div>
         </>
-      )}
-    </Card>
-  );
-}
-
-function TopMoversCard() {
-  const { data, isError, refetch } = useTopMovers();
-  return (
-    <Card title={<SectionTitle icon={TrendingUp}>Maiores altas e baixas</SectionTitle>} bodyClass="p-0">
-      {isError ? (
-        <ErrorState onRetry={refetch} />
-      ) : !data ? (
-        <div className="grid gap-2 p-4">
-          <Skeleton /> <Skeleton /> <Skeleton />
-        </div>
-      ) : (
-        <div className="grid grid-cols-2 divide-x divide-border-soft">
-          <div>
-            <div className="px-4 pt-3 text-[11px] font-semibold uppercase tracking-wider text-up">Altas</div>
-            <ul>
-              {data.altas.map((q) => (
-                <li key={q.ticker}>
-                  <Link to={`/ativo/${q.ticker}`} className="flex items-center justify-between px-4 py-2 hover:bg-elevated">
-                    <span className="num text-sm font-bold text-fg-0">{q.ticker}</span>
-                    <span className="num text-sm font-semibold text-up">{fmtPct(q.variacao_pct)}</span>
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          </div>
-          <div>
-            <div className="px-4 pt-3 text-[11px] font-semibold uppercase tracking-wider text-down">Baixas</div>
-            <ul>
-              {data.baixas.map((q) => (
-                <li key={q.ticker}>
-                  <Link to={`/ativo/${q.ticker}`} className="flex items-center justify-between px-4 py-2 hover:bg-elevated">
-                    <span className="num text-sm font-bold text-fg-0">{q.ticker}</span>
-                    <span className="num text-sm font-semibold text-down">{fmtPct(q.variacao_pct)}</span>
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          </div>
-        </div>
-      )}
-    </Card>
-  );
-}
-
-function NewsCard() {
-  const { data: news, isError, refetch } = useNews();
-  return (
-    <Card title={<SectionTitle icon={Newspaper}>Notícias do mercado</SectionTitle>} bodyClass="p-0">
-      {isError ? (
-        <ErrorState onRetry={refetch} />
-      ) : !news ? (
-        <div className="grid gap-2 p-4">
-          <Skeleton /> <Skeleton /> <Skeleton className="h-4 w-2/3" />
-        </div>
-      ) : news.length === 0 ? (
-        <Empty>Nenhuma notícia no momento.</Empty>
-      ) : (
-        <ul>
-          {news.slice(0, 5).map((n) => (
-            <li key={n.id} className="border-b border-border-soft px-4 py-2.5 last:border-0">
-              <Link to={`/ativo/${n.ticker}`} className="block hover:text-accent">
-                <p className="text-sm text-fg-1">{n.titulo}</p>
-                <p className="mt-1 text-xs text-fg-3">
-                  <span className="num font-semibold">{n.ticker}</span> · {n.fonte} · há {sinceNow(n.data)}
-                </p>
-              </Link>
-            </li>
-          ))}
-        </ul>
       )}
     </Card>
   );
@@ -381,12 +304,12 @@ export default function Dashboard() {
                         <div className="truncate text-xs text-fg-2">{w.nome}</div>
                       </Link>
                     </td>
-                    <td className="num px-2 py-2.5 text-right text-fg-0">{fmtNum(w.cotacao.preco)}</td>
-                    <td className={`num px-2 py-2.5 text-right ${trendClass(w.cotacao.variacao_pct)}`}>
-                      {fmtPct(w.cotacao.variacao_pct)}
+                    <td className="num px-2 py-2.5 text-right text-fg-0">{w.cotacao ? fmtNum(w.cotacao.preco) : '—'}</td>
+                    <td className={`num px-2 py-2.5 text-right ${trendClass(w.cotacao?.variacao_pct)}`}>
+                      {w.cotacao ? fmtPct(w.cotacao.variacao_pct) : '—'}
                     </td>
                     <td className="hidden w-32 px-2 py-2.5 md:table-cell">
-                      <Sparkline candles={generateCandles(w.ticker)} positive={w.cotacao.variacao_pct >= 0} />
+                      <Sparkline candles={generateCandles(w.ticker)} positive={(w.cotacao?.variacao_pct ?? 0) >= 0} />
                     </td>
                     <td className="px-2 py-2.5 text-center">
                       {w.sinais > 0 ? <Pill tone="blue">{w.sinais}</Pill> : <span className="text-fg-3">—</span>}
@@ -416,10 +339,6 @@ export default function Dashboard() {
             </div>
           )}
         </Card>
-
-          <TopMoversCard />
-
-          <NewsCard />
         </div>
 
         <div className="grid content-start gap-6">
