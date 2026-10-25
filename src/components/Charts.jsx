@@ -125,16 +125,3 @@ export function DonutChart({ data = [], height = 190 }) {
     </ResponsiveContainer>
   );
 }
-
-/** Sparkline compacto usado nos cards de watchlist. */
-export function Sparkline({ candles = [], height = 34, positive = true }) {
-  const p = usePalette();
-  const data = candles.slice(-40).map((c, i) => ({ i, v: c.close }));
-  return (
-    <ResponsiveContainer width="100%" height={height}>
-      <LineChart data={data}>
-        <Line type="monotone" dataKey="v" stroke={positive ? p.up : p.down} strokeWidth={1.5} dot={false} />
-      </LineChart>
-    </ResponsiveContainer>
-  );
-}

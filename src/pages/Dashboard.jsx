@@ -25,9 +25,9 @@ import {
   useHistory,
 } from '../hooks/queries.js';
 import { useMediaQuery } from '../hooks/useMediaQuery.js';
-import { generateCandles, PERIODS } from '../api/mock/assets.js';
+import { PERIODS } from '../api/mock/assets.js';
 import { Card, Kpi, Pill, Skeleton, Empty, ErrorState, SectionTitle } from '../components/ui.jsx';
-import { Sparkline, RsiChart } from '../components/Charts.jsx';
+import { RsiChart } from '../components/Charts.jsx';
 import PriceChart from '../components/PriceChart.jsx';
 import Disclaimer from '../components/Disclaimer.jsx';
 import { fmtBRL, fmtNum, fmtPct, sinceNow, trendClass } from '../lib/format.js';
@@ -232,7 +232,7 @@ export default function Dashboard() {
           label="Variação do dia"
           value={portfolio ? fmtPct(portfolio.variacao_dia_pct) : '—'}
           tone={portfolio ? trendClass(portfolio.variacao_dia_pct) : ''}
-          hint="Ibovespa +0,31% · CDI +0,04%"
+          hint="Média das posições, ponderada pelo valor"
         />
         <Kpi
           icon={Radar}
@@ -289,7 +289,6 @@ export default function Dashboard() {
                   <th className="px-4 py-2 text-left font-medium">Ativo</th>
                   <th className="px-2 py-2 text-right font-medium">Preço</th>
                   <th className="px-2 py-2 text-right font-medium">Dia</th>
-                  <th className="hidden px-2 py-2 text-left font-medium md:table-cell">40 pregões</th>
                   <th className="px-2 py-2 text-center font-medium">Sinais</th>
                   <th className="px-4 py-2 text-right font-medium">Alertas</th>
                 </tr>
@@ -307,9 +306,6 @@ export default function Dashboard() {
                     <td className="num px-2 py-2.5 text-right text-fg-0">{w.cotacao ? fmtNum(w.cotacao.preco) : '—'}</td>
                     <td className={`num px-2 py-2.5 text-right ${trendClass(w.cotacao?.variacao_pct)}`}>
                       {w.cotacao ? fmtPct(w.cotacao.variacao_pct) : '—'}
-                    </td>
-                    <td className="hidden w-32 px-2 py-2.5 md:table-cell">
-                      <Sparkline candles={generateCandles(w.ticker)} positive={(w.cotacao?.variacao_pct ?? 0) >= 0} />
                     </td>
                     <td className="px-2 py-2.5 text-center">
                       {w.sinais > 0 ? <Pill tone="blue">{w.sinais}</Pill> : <span className="text-fg-3">—</span>}
