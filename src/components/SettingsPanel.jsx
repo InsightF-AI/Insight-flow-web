@@ -225,7 +225,7 @@ export default function SettingsPanel() {
 
       <DadosCard usuario={usuario} watchlist={watchlist} posicoes={posicoes} operacoes={operacoes} />
 
-      {/* só em `npm run dev`: num build publicado os alternadores não têm efeito (ver delayRead). */}
+      {/* só em `npm run dev`: num build publicado os alternadores não têm efeito (ver apiFetch). */}
       {import.meta.env.DEV && (
         <Card title={<SectionTitle icon={Bug} tone="amber">Modo desenvolvedor</SectionTitle>}>
           <Toggle
@@ -236,7 +236,7 @@ export default function SettingsPanel() {
           />
           <Toggle
             label="Forçar erro de carregamento"
-            hint="RNF-10: as consultas de leitura (watchlist, portfólio, rankings, alertas etc.) passam a falhar, para demonstrar o estado de erro com nova tentativa em cada tela. Ações de escrita (login, criar operação/alerta) não são afetadas."
+            hint="RNF-10: as consultas de leitura (watchlist, portfólio, alertas etc.) passam a falhar, para demonstrar o estado de erro com nova tentativa em cada tela. Ações de escrita (login, criar operação/alerta) não são afetadas."
             value={forcarErro}
             onChange={(v) => setFlag('forcarErro', v)}
           />
@@ -247,8 +247,7 @@ export default function SettingsPanel() {
         <p>
           Cliente web em React + Vite integrado à API do InsightFlow: watchlist, cotações, histórico, indicadores,
           sinais, alertas, carteira simulada, notificações e IA vêm do servidor. Rankings, notícias e o score de
-          oportunidade ainda são ilustrativos (marcados na tela), porque a API não tem essas rotas. Nenhuma ordem
-          real é enviada a corretora.
+          oportunidade ficam de fora até a API ter essas rotas. Nenhuma ordem real é enviada a corretora.
         </p>
       </Card>
     </div>

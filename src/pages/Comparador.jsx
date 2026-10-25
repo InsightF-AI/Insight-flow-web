@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Plus, X } from 'lucide-react';
-import { useAsset, useIndicators, useScore, useSignals, useWatchlist } from '../hooks/queries.js';
+import { useAsset, useIndicators, useSignals, useWatchlist } from '../hooks/queries.js';
 import { Card, Empty, ErrorState, Skeleton } from '../components/ui.jsx';
 import { fmtNum, fmtPct, trendClass } from '../lib/format.js';
 
@@ -19,8 +19,6 @@ function Linha({ label, value, tone }) {
 function ComparadorColuna({ ticker, onRemove }) {
   const { data: asset, isError, refetch } = useAsset(ticker);
   const { data: snapshot } = useIndicators(ticker);
-  const { data: score } = useScore(ticker);
-  // sinais reais do ativo (os do score são ilustrativos).
   const { data: sinais } = useSignals({ ticker });
   const cot = asset?.cotacao;
 
@@ -46,7 +44,6 @@ function ComparadorColuna({ ticker, onRemove }) {
           <Linha label="Variação do dia" value={cot ? fmtPct(cot.variacao_pct) : '—'} tone={trendClass(cot?.variacao_pct)} />
           <Linha label="RSI (14)" value={snapshot ? fmtNum(snapshot['RSI (14)'], 1) : '—'} />
           <Linha label="Volume relativo" value={snapshot ? `${fmtNum(snapshot['Volume relativo'], 2)}×` : '—'} />
-          <Linha label="Score (ilustrativo)" value={score ? score.score : '—'} />
           <Linha label="Sinais ativos" value={sinais ? sinais.length : '—'} />
         </div>
       )}

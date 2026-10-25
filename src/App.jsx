@@ -9,7 +9,6 @@ import RecoverPassword from './pages/RecoverPassword.jsx';
 import Dashboard from './pages/Dashboard.jsx';
 import AssetDetail from './pages/AssetDetail.jsx';
 import Portfolio from './pages/Portfolio.jsx';
-import Rankings from './pages/Rankings.jsx';
 import Comparador from './pages/Comparador.jsx';
 import Chat from './pages/Chat.jsx';
 import Alerts from './pages/Alerts.jsx';
@@ -35,7 +34,6 @@ export default function App() {
         <Route path="/" element={<Private><Dashboard /></Private>} />
         <Route path="/ativo/:ticker" element={<Private><AssetDetail /></Private>} />
         <Route path="/portfolio" element={<Private><Portfolio /></Private>} />
-        <Route path="/rankings" element={<Private><Rankings /></Private>} />
         <Route path="/comparar" element={<Private><Comparador /></Private>} />
         <Route path="/chat" element={<Private><Chat /></Private>} />
         <Route path="/alertas" element={<Private><Alerts /></Private>} />

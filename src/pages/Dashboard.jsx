@@ -11,7 +11,6 @@ import {
   Activity,
   Radar,
   LineChart as LineChartIcon,
-  Newspaper,
   Landmark,
   Bitcoin,
   ChevronRight,
@@ -24,16 +23,14 @@ import {
   useDailySummary,
   useWatchlistMutations,
   useHistory,
-  useTopMovers,
-  useNews,
 } from '../hooks/queries.js';
 import { useMediaQuery } from '../hooks/useMediaQuery.js';
-import { generateCandles, PERIODS } from '../api/mock/assets.js';
-import { Card, Kpi, Pill, Skeleton, Empty, ErrorState, SectionTitle, Ilustrativo } from '../components/ui.jsx';
-import { Sparkline, RsiChart } from '../components/Charts.jsx';
+import { PERIODS } from '../api/mock/assets.js';
+import { Card, Kpi, Pill, Skeleton, Empty, ErrorState, SectionTitle } from '../components/ui.jsx';
+import { RsiChart } from '../components/Charts.jsx';
 import PriceChart from '../components/PriceChart.jsx';
 import Disclaimer from '../components/Disclaimer.jsx';
-import { fmtBRL, fmtNum, fmtPct, sinceNow, trendClass } from '../lib/format.js';
+import { fmtBRL, fmtNum, fmtPct, fmtPctOuTraco, fmtDateTime, sinceNow, trendClass } from '../lib/format.js';
 
 function MarketChartCard({ watchlist }) {
   const [ticker, setTicker] = useState('');
@@ -111,88 +108,6 @@ function MarketChartCard({ watchlist }) {
             <RsiChart candles={hist.candles} values={hist.indicators.rsi14} height={mobile ? 70 : 90} />
           </div>
         </>
-      )}
-    </Card>
-  );
-}
-
-function TopMoversCard() {
-  const { data, isError, refetch } = useTopMovers();
-  return (
-    <Card
-      title={<SectionTitle icon={TrendingUp}>Maiores altas e baixas</SectionTitle>}
-      action={<Ilustrativo motivo="A API ainda não tem rota de maiores altas e baixas; os valores são ilustrativos." />}
-      bodyClass="p-0"
-    >
-      {isError ? (
-        <ErrorState onRetry={refetch} />
-      ) : !data ? (
-        <div className="grid gap-2 p-4">
-          <Skeleton /> <Skeleton /> <Skeleton />
-        </div>
-      ) : (
-        <div className="grid grid-cols-2 divide-x divide-border-soft">
-          <div>
-            <div className="px-4 pt-3 text-[11px] font-semibold uppercase tracking-wider text-up">Altas</div>
-            <ul>
-              {data.altas.map((q) => (
-                <li key={q.ticker}>
-                  <Link to={`/ativo/${q.ticker}`} className="flex items-center justify-between px-4 py-2 hover:bg-elevated">
-                    <span className="num text-sm font-bold text-fg-0">{q.ticker}</span>
-                    <span className="num text-sm font-semibold text-up">{fmtPct(q.variacao_pct)}</span>
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          </div>
-          <div>
-            <div className="px-4 pt-3 text-[11px] font-semibold uppercase tracking-wider text-down">Baixas</div>
-            <ul>
-              {data.baixas.map((q) => (
-                <li key={q.ticker}>
-                  <Link to={`/ativo/${q.ticker}`} className="flex items-center justify-between px-4 py-2 hover:bg-elevated">
-                    <span className="num text-sm font-bold text-fg-0">{q.ticker}</span>
-                    <span className="num text-sm font-semibold text-down">{fmtPct(q.variacao_pct)}</span>
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          </div>
-        </div>
-      )}
-    </Card>
-  );
-}
-
-function NewsCard() {
-  const { data: news, isError, refetch } = useNews();
-  return (
-    <Card
-      title={<SectionTitle icon={Newspaper}>Notícias do mercado</SectionTitle>}
-      action={<Ilustrativo motivo="A API ainda não tem rota de notícias; as manchetes são ilustrativas." />}
-      bodyClass="p-0"
-    >
-      {isError ? (
-        <ErrorState onRetry={refetch} />
-      ) : !news ? (
-        <div className="grid gap-2 p-4">
-          <Skeleton /> <Skeleton /> <Skeleton className="h-4 w-2/3" />
-        </div>
-      ) : news.length === 0 ? (
-        <Empty>Nenhuma notícia no momento.</Empty>
-      ) : (
-        <ul>
-          {news.slice(0, 5).map((n) => (
-            <li key={n.id} className="border-b border-border-soft px-4 py-2.5 last:border-0">
-              <Link to={`/ativo/${n.ticker}`} className="block hover:text-accent">
-                <p className="text-sm text-fg-1">{n.titulo}</p>
-                <p className="mt-1 text-xs text-fg-3">
-                  <span className="num font-semibold">{n.ticker}</span> · {n.fonte} · há {sinceNow(n.data)}
-                </p>
-              </Link>
-            </li>
-          ))}
-        </ul>
       )}
     </Card>
   );
@@ -309,15 +224,15 @@ export default function Dashboard() {
           label="Resultado não realizado"
           value={portfolio ? fmtBRL(portfolio.resultado) : '—'}
           tone={portfolio ? trendClass(portfolio.resultado) : ''}
-          hint={portfolio ? fmtPct(portfolio.resultado_pct) : ''}
+          hint={portfolio ? `${fmtPct(portfolio.resultado_pct)} · realizado ${fmtBRL(portfolio.lucro_realizado)}` : ''}
         />
         <Kpi
           icon={Activity}
-          iconTone={portfolio?.variacao_dia_pct >= 0 ? 'up' : 'down'}
+          iconTone={(portfolio?.variacao_dia_pct ?? 0) >= 0 ? 'up' : 'down'}
           label="Variação do dia"
-          value={portfolio ? fmtPct(portfolio.variacao_dia_pct) : '—'}
+          value={fmtPctOuTraco(portfolio?.variacao_dia_pct)}
           tone={portfolio ? trendClass(portfolio.variacao_dia_pct) : ''}
-          hint="Ibovespa +0,31% · CDI +0,04%"
+          hint="Média das posições, ponderada pelo valor"
         />
         <Kpi
           icon={Radar}
@@ -374,7 +289,6 @@ export default function Dashboard() {
                   <th className="px-4 py-2 text-left font-medium">Ativo</th>
                   <th className="px-2 py-2 text-right font-medium">Preço</th>
                   <th className="px-2 py-2 text-right font-medium">Dia</th>
-                  <th className="hidden px-2 py-2 text-left font-medium md:table-cell">40 pregões</th>
                   <th className="px-2 py-2 text-center font-medium">Sinais</th>
                   <th className="px-4 py-2 text-right font-medium">Alertas</th>
                 </tr>
@@ -392,9 +306,6 @@ export default function Dashboard() {
                     <td className="num px-2 py-2.5 text-right text-fg-0">{w.cotacao ? fmtNum(w.cotacao.preco) : '—'}</td>
                     <td className={`num px-2 py-2.5 text-right ${trendClass(w.cotacao?.variacao_pct)}`}>
                       {w.cotacao ? fmtPct(w.cotacao.variacao_pct) : '—'}
-                    </td>
-                    <td className="hidden w-32 px-2 py-2.5 md:table-cell">
-                      <Sparkline candles={generateCandles(w.ticker)} positive={(w.cotacao?.variacao_pct ?? 0) >= 0} />
                     </td>
                     <td className="px-2 py-2.5 text-center">
                       {w.sinais > 0 ? <Pill tone="blue">{w.sinais}</Pill> : <span className="text-fg-3">—</span>}
@@ -424,10 +335,6 @@ export default function Dashboard() {
             </div>
           )}
         </Card>
-
-          <TopMoversCard />
-
-          <NewsCard />
         </div>
 
         <div className="grid content-start gap-6">
@@ -438,6 +345,11 @@ export default function Dashboard() {
             {resumo ? (
               <>
                 <p className="text-fg-1">{resumo.texto}</p>
+                <p className="mt-3 text-xs text-fg-3">
+                  gerado em {fmtDateTime(resumo.gerado_em)}
+                  {/* o servidor gera às 18h30 e só para quem tem operações — o último pode ser de outro dia. */}
+                  {new Date(resumo.gerado_em).toDateString() !== new Date().toDateString() && ' · não é o resumo de hoje'}
+                </p>
                 <Disclaimer className="mt-3" />
               </>
             ) : erroResumo ? (

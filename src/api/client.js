@@ -1,17 +1,12 @@
 /**
  * Camada de acesso a dados — ponto único de integração com o backend FastAPI (`/api/v1`,
  * via proxy do Vite). O que a API expõe vem dela; o que ela ainda não expõe (notícias,
- * rankings, score, sessões, perfil) continua em mock em memória, marcado nos métodos.
+ * rankings, score) fica fora da tela até o backend ter a rota.
  */
-import { ASSETS, byTicker, generateCandles } from './mock/assets.js';
-import { RULES, SIGNALS, BACKTESTS, ruleOf } from './mock/signals.js';
 import { DISCLAIMER } from './mock/ai.js';
-import { NEWS } from './mock/news.js';
-import { computeIndicators, lastDefined } from '../lib/indicators.js';
-import { fmtBRL, fmtPct, fmtNum } from '../lib/format.js';
+import { computeIndicators } from '../lib/indicators.js';
+import { fmtBRL } from '../lib/format.js';
 import { useAuthStore, useUiStore } from '../store/index.js';
-
-const delay = (ms = 260) => new Promise((r) => setTimeout(r, ms));
 
 /* ---------- integração real com a API (RF-01, RF-02) ---------- */
 const API_BASE = '/api/v1';
@@ -55,6 +50,12 @@ export function renovarTokens() {
 
 async function apiFetch(path, options = {}, tentouRenovar = false) {
   const { timeoutMs = 20_000, ...fetchOptions } = options;
+  // RNF-10: o alternador "Forçar erro" (Configurações → Modo desenvolvedor) derruba só as leituras
+  // (GET) — escritas ficam fora, pra não travar login/criação enquanto se testa o estado de erro.
+  // Só vale em dev: num build publicado o card some e um valor salvo no navegador não teria onde ser desligado.
+  if (import.meta.env.DEV && !fetchOptions.method && useUiStore.getState().forcarErro) {
+    throw new Error('Falha ao carregar os dados. Verifique sua conexão e tente novamente.');
+  }
   const token = useAuthStore.getState().token;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -90,25 +91,28 @@ async function apiFetch(path, options = {}, tentouRenovar = false) {
   return res.status === 204 ? null : res.json();
 }
 
-/** RNF-10 — ponto único de latência simulada (300–800 ms) e do alternador "Forçar erro"
- * (Configurações → Modo desenvolvedor). Usado só pelos métodos de leitura (os que alimentam
- * useQuery/skeletons) — mutações mantêm seus próprios delays e ficam fora do toggle, pra não
- * travar ações como login/criação enquanto se testa o estado de erro de uma tela.
- * Os alternadores só valem em dev: num build publicado, um valor persistido no navegador não tem
- * mais onde ser desligado (o card some), então é ignorado. */
-const delayRead = async () => {
-  await delay(300 + Math.random() * 500);
-  if (import.meta.env.DEV && useUiStore.getState().forcarErro) {
-    throw new Error('Falha ao carregar os dados. Verifique sua conexão e tente novamente.');
+/** Ativo fora da watchlist não tem ativo_id na API (só ganha um ao entrar nela): sem como buscar
+ * histórico, indicadores, sinais ou análise reais — a tela do ativo pede pra adicioná-lo. */
+function exigirNaWatchlist(cached) {
+  if (cached) return cached;
+  const err = new Error('Adicione o ativo à watchlist para ver os dados reais.');
+  err.code = 'FORA_DA_WATCHLIST';
+  throw err;
+}
+
+/** UC-03 alternativo: com o toggle de desenvolvedor "IA indisponível" ligado, simula falha do provedor. */
+function simularIaIndisponivel() {
+  if (import.meta.env.DEV && useUiStore.getState().iaIndisponivel) {
+    throw new Error('Serviço de análise por IA temporariamente indisponível.');
   }
-};
+}
 
 /* ---------- estado mutável da sessão (substituído pelo banco no backend) ---------- */
 // ticker -> {id, notificar, nome, tipo, setor, moeda} do último getWatchlist().
 // É também o único jeito que temos de resolver o UUID real de um ativo no backend: a API
 // não expõe um endpoint pra buscar/criar um ativo por ticker fora do fluxo de watchlist, então
-// cotação/histórico/indicadores só usam dados reais para ativos que já estão na watchlist —
-// para os demais (ex: resultado de busca ainda não adicionado), cai no mock mesmo.
+// cotação/histórico/indicadores/sinais só existem para ativos que já estão na watchlist —
+// os demais (ex: resultado de busca ainda não adicionado) ficam sem esses dados até entrarem nela.
 let watchlistIndex = new Map();
 // alerta_id -> último AlertaResponse visto em getUserRules() (pra saber o estado ao alternar).
 let alertasIndex = new Map();
@@ -244,29 +248,6 @@ async function fetchRealCandlesEIndicadores(ativoId) {
 }
 let readAlerts = new Set();
 
-// null para ticker fora do universo mockado (ex: PETR4F, que só existe na API) — sem série pra simular.
-const quoteOf = (ticker) => {
-  const candles = generateCandles(ticker);
-  if (candles.length < 2) return null;
-  const last = candles[candles.length - 1];
-  const prev = candles[candles.length - 2];
-  const variacao = last.close - prev.close;
-  return {
-    ticker,
-    preco: last.close,
-    variacao: +variacao.toFixed(2),
-    variacao_pct: +((variacao / prev.close) * 100).toFixed(2),
-    volume: last.volume,
-    data_hora: new Date().toISOString(),
-  };
-};
-
-const seriesOf = (ticker) => {
-  const candles = generateCandles(ticker);
-  const ind = computeIndicators(candles);
-  return { candles, ind };
-};
-
 export const api = {
   /* ----- autenticação (RF-01, RF-02) ----- */
   async login({ email, senha }) {
@@ -310,10 +291,10 @@ export const api = {
   async getAsset(ticker) {
     const cached = await resolverAtivoCache(ticker);
     if (!cached) {
-      await delayRead();
-      const asset = byTicker(ticker);
-      if (!asset) throw new Error('Ativo não encontrado.');
-      return { ...asset, cotacao: quoteOf(asset.ticker) };
+      // fora da watchlist, a busca diz o que o ativo é — cotação, só depois de adicionado.
+      const ativo = (await apiFetch(`/ativos/buscar?termo=${encodeURIComponent(ticker)}`)).find((a) => a.ticker === ticker);
+      if (!ativo) throw new Error('Ativo não encontrado.');
+      return { ...ativo, fonte: ativo.tipo === 'CRIPTO' ? 'Binance' : 'brapi', cotacao: null };
     }
     // cotação fora do ar (503 da fonte de mercado) não derruba a tela do ativo: o cabeçalho mostra "—".
     const cot = await apiFetch(`/ativos/${cached.id}/cotacao`).catch(() => null);
@@ -327,32 +308,8 @@ export const api = {
       cotacao: cot ? mapCotacao(ticker, cot) : null,
     };
   },
-  async getQuotes(tickers) {
-    await delay(240);
-    return tickers.map(quoteOf);
-  },
   async getHistory(ticker, periodo = '1a') {
-    const cached = await resolverAtivoCache(ticker);
-    if (!cached) {
-      await delayRead();
-      const { candles, ind } = seriesOf(ticker);
-      const sizes = { '1d': 2, '1s': 6, '1m': 24, '3m': 68, '1a': 254, '5a': candles.length };
-      const n = Math.min(sizes[periodo] ?? 254, candles.length);
-      const from = candles.length - n;
-      const slice = (arr) => arr.slice(from);
-      return {
-        candles: candles.slice(from),
-        indicators: {
-          sma20: slice(ind.sma20),
-          sma50: slice(ind.sma50),
-          sma200: slice(ind.sma200),
-          rsi14: slice(ind.rsi14),
-          macd: { line: slice(ind.macd.line), signal: slice(ind.macd.signal), hist: slice(ind.macd.hist) },
-          bollinger: { mid: slice(ind.bollinger.mid), upper: slice(ind.bollinger.upper), lower: slice(ind.bollinger.lower) },
-          volRel: slice(ind.volRel),
-        },
-      };
-    }
+    const cached = exigirNaWatchlist(await resolverAtivoCache(ticker));
     const { candles, ind } = await fetchRealCandlesEIndicadores(cached.id);
     const n = Math.min(PERIODO_TAMANHO[periodo] ?? 254, candles.length);
     const from = candles.length - n;
@@ -371,22 +328,7 @@ export const api = {
     };
   },
   async getIndicatorSnapshot(ticker) {
-    const cached = await resolverAtivoCache(ticker);
-    if (!cached) {
-      await delayRead();
-      const { ind } = seriesOf(ticker);
-      return {
-        'SMA (20)': lastDefined(ind.sma20),
-        'SMA (50)': lastDefined(ind.sma50),
-        'SMA (200)': lastDefined(ind.sma200),
-        'RSI (14)': lastDefined(ind.rsi14),
-        'MACD (12,26,9)': lastDefined(ind.macd.line),
-        'Sinal MACD': lastDefined(ind.macd.signal),
-        'Bollinger sup.': lastDefined(ind.bollinger.upper),
-        'Bollinger inf.': lastDefined(ind.bollinger.lower),
-        'Volume relativo': lastDefined(ind.volRel),
-      };
-    }
+    const cached = exigirNaWatchlist(await resolverAtivoCache(ticker));
     // valores calculados pelo backend (GET /ativos/{id}/indicadores) — a série por candle
     // dos gráficos continua sendo calculada localmente a partir do histórico real.
     const lista = await apiFetch(`/ativos/${cached.id}/indicadores`);
@@ -418,66 +360,8 @@ export const api = {
       );
       return porAtivo.flat().sort((a, b) => b.data_ativacao.localeCompare(a.data_ativacao));
     }
-    const cached = await resolverAtivoCache(ticker);
-    if (!cached) {
-      // ativo fora da watchlist não tem ativo_id na API — sem como buscar sinal real.
-      await delayRead();
-      return SIGNALS.filter((s) => s.ticker === ticker && (!apenasAtivos || !s.data_desativacao)).map((s) => ({
-        ...s,
-        regra: ruleOf(s.regra_id),
-        backtest: BACKTESTS[s.regra_id],
-      }));
-    }
+    const cached = exigirNaWatchlist(await resolverAtivoCache(ticker));
     return sinaisReais(ticker, cached.id, apenasAtivos);
-  },
-  async getRules() {
-    await delay(140);
-    return RULES;
-  },
-  async getScore(ticker) {
-    await delayRead();
-    const ativos = SIGNALS.filter((s) => s.ticker === ticker && !s.data_desativacao);
-    const soma = ativos.reduce((a, s) => a + (ruleOf(s.regra_id)?.peso ?? 0), 0);
-    return { score: +Math.min(soma * 100, 100).toFixed(0), sinais: ativos.length };
-  },
-  async getTopMovers(limit = 5) {
-    await delayRead();
-    const quotes = ASSETS.map((a) => ({ ...quoteOf(a.ticker), nome: a.nome, tipo: a.tipo }));
-    return {
-      altas: [...quotes].sort((a, b) => b.variacao_pct - a.variacao_pct).slice(0, limit),
-      baixas: [...quotes].sort((a, b) => a.variacao_pct - b.variacao_pct).slice(0, limit),
-    };
-  },
-  /** Rankings de mercado (RF-05 a RF-08) — altas, baixas, volume relativo e sinais, no estilo dos rankings do investidor10. */
-  async getRankings(limit = 6) {
-    await delayRead();
-    const quotes = ASSETS.map((a) => ({ ...quoteOf(a.ticker), nome: a.nome, tipo: a.tipo }));
-    const comIndicadores = ASSETS.map((a) => {
-      const ind = computeIndicators(generateCandles(a.ticker));
-      return { ticker: a.ticker, nome: a.nome, tipo: a.tipo, volRel: lastDefined(ind.volRel) ?? 0 };
-    });
-    const comSinais = ASSETS.map((a) => ({
-      ticker: a.ticker,
-      nome: a.nome,
-      tipo: a.tipo,
-      sinais: SIGNALS.filter((s) => s.ticker === a.ticker && !s.data_desativacao).length,
-    }));
-    return {
-      altas: [...quotes].sort((a, b) => b.variacao_pct - a.variacao_pct).slice(0, limit),
-      baixas: [...quotes].sort((a, b) => a.variacao_pct - b.variacao_pct).slice(0, limit),
-      volume: [...comIndicadores].sort((a, b) => b.volRel - a.volRel).slice(0, limit),
-      sinais: comSinais
-        .filter((s) => s.sinais > 0)
-        .sort((a, b) => b.sinais - a.sinais)
-        .slice(0, limit),
-    };
-  },
-  /** Notícias de mercado (opcionalmente filtradas por ativo). */
-  async getNews(ticker, limit = 8) {
-    await delayRead();
-    return NEWS.filter((n) => !ticker || n.ticker === ticker)
-      .sort((a, b) => b.data.localeCompare(a.data))
-      .slice(0, limit);
   },
 
   /* ----- watchlist (RF-03, RN-08) ----- */
@@ -614,7 +498,8 @@ export const api = {
           moeda: info.moeda ?? 'BRL',
           preco_medio: precoMedio,
           preco_atual: Number(p.cotacao_atual),
-          variacao_pct: cot ? Number(cot.variacao_percentual) : 0,
+          // null quando a cotação falha — fica fora da média do dia em vez de contar como 0%.
+          variacao_pct: cot ? Number(cot.variacao_percentual) : null,
           valor_atual: valorAtual,
           resultado,
           resultado_pct: custo ? (resultado / custo) * 100 : 0,
@@ -635,11 +520,17 @@ export const api = {
       apiFetch('/operacoes').catch(() => []),
     ]);
     const pct = fracaoParaPct(r.percentual) ?? 0;
-    const pctCdi = fracaoParaPct(cdi?.rentabilidade_benchmark_percentual) ?? 0;
-    const pctIbov = fracaoParaPct(ibov?.rentabilidade_benchmark_percentual) ?? 0;
+    // benchmark que falhou (ou sem dado no período) fica null — a tela mostra "—", não 0%.
+    const pctCdi = fracaoParaPct(cdi?.rentabilidade_benchmark_percentual);
+    const pctIbov = fracaoParaPct(ibov?.rentabilidade_benchmark_percentual);
     const valorTotal = Number(r.valor_mercado_brl);
-    const pesoTotal = pos.reduce((a, p) => a + p.valor_atual_brl, 0);
-    const variacaoDia = pesoTotal ? pos.reduce((a, p) => a + p.variacao_pct * p.valor_atual_brl, 0) / pesoTotal : 0;
+    // média do dia ponderada pelo valor, só entre as posições cuja cotação veio.
+    const comCotacao = pos.filter((p) => p.variacao_pct != null);
+    const pesoTotal = comCotacao.reduce((a, p) => a + p.valor_atual_brl, 0);
+    const variacaoDia = pesoTotal
+      ? comCotacao.reduce((a, p) => a + p.variacao_pct * p.valor_atual_brl, 0) / pesoTotal
+      : null;
+    const base100 = (v) => (v == null ? null : +(100 + v).toFixed(2));
     // a API devolve só a rentabilidade acumulada (não uma série histórica): o gráfico liga
     // o início (base 100, data da 1ª operação) ao valor de hoje, para carteira e benchmarks.
     const hoje = new Date().toISOString().slice(0, 10);
@@ -647,13 +538,15 @@ export const api = {
     return {
       valor_total: valorTotal,
       custo_total: Number(r.custo_base_brl),
-      resultado: Number(r.lucro_nao_realizado_brl) + Number(r.lucro_realizado_brl),
+      // `percentual` da API é o lucro não realizado sobre o custo — o valor acompanha o mesmo recorte.
+      resultado: Number(r.lucro_nao_realizado_brl),
       resultado_pct: pct,
+      lucro_realizado: Number(r.lucro_realizado_brl),
       variacao_dia_pct: variacaoDia,
       benchmarks: { cdi: pctCdi, ibovespa: pctIbov },
       curva: [
-        { data: inicio, carteira: 100, ibovespa: 100, cdi: 100 },
-        { data: hoje, carteira: +(100 + pct).toFixed(2), ibovespa: +(100 + pctIbov).toFixed(2), cdi: +(100 + pctCdi).toFixed(2) },
+        { data: inicio, carteira: 100, ibovespa: pctIbov == null ? null : 100, cdi: pctCdi == null ? null : 100 },
+        { data: hoje, carteira: base100(pct), ibovespa: base100(pctIbov), cdi: base100(pctCdi) },
       ],
     };
   },
@@ -802,37 +695,25 @@ export const api = {
   },
 
   /* ----- IA (RF-13, RF-14, RF-15) ----- */
-  /** RF-13/RF-14/RNF-02 — texto gerado deterministicamente a partir dos indicadores
-   * reais do ativo (nunca fixture estática). UC-03 alternativo: com o toggle de
-   * desenvolvedor "IA indisponível" ligado, simula falha do provedor. */
+  /** RF-13/RF-14 — análise do ativo gerada pela IA do backend. */
   async getAssetAnalysis(ticker) {
-    const cached = await resolverAtivoCache(ticker);
-    if (cached) {
-      // Gemini no plano gratuito leva de 5 a 48 s — timeout folgado pra não abortar antes do backend.
-      const a = await apiFetch(`/ativos/${cached.id}/analise`, { timeoutMs: 70_000 });
-      return {
-        texto: a.texto,
-        provedor: 'gemini',
-        modelo: a.modelo,
-        em_cache: a.em_cache,
-        gerado_em: a.gerado_em,
-        disclaimer: a.aviso_legal,
-      };
-    }
-    await delay(900);
-    if (import.meta.env.DEV && useUiStore.getState().iaIndisponivel) {
-      throw new Error('Serviço de análise por IA temporariamente indisponível.');
-    }
+    const cached = exigirNaWatchlist(await resolverAtivoCache(ticker));
+    simularIaIndisponivel();
+    // Gemini no plano gratuito leva de 5 a 48 s — timeout folgado pra não abortar antes do backend.
+    const a = await apiFetch(`/ativos/${cached.id}/analise`, { timeoutMs: 70_000 });
     return {
-      texto: gerarAnaliseAtivo(ticker),
-      provedor: 'mock',
-      modelo: 'fixtures-v1',
-      prompt_versao: 'v1.0',
-      gerado_em: new Date().toISOString(),
-      disclaimer: DISCLAIMER,
+      texto: a.texto,
+      provedor: 'gemini',
+      modelo: a.modelo,
+      em_cache: a.em_cache,
+      // a IA falhou e o backend devolveu a última análise salva — a tela avisa a data dela.
+      desatualizada: a.desatualizada,
+      gerado_em: a.gerado_em,
+      disclaimer: a.aviso_legal,
     };
   },
   async getDailySummary() {
+    simularIaIndisponivel();
     // o resumo diário é gerado pelo scheduler do backend e entregue como notificação RESUMO_DIARIO.
     const notificacoes = await apiFetch('/notificacoes');
     const ultimo = notificacoes
@@ -854,56 +735,3 @@ export const api = {
     return { texto: r.texto, ferramentas: [], disclaimer: r.aviso_legal, modelo: r.modelo };
   },
 };
-
-/* ----- análise textual gerada deterministicamente (RF-13, RF-14, RNF-02) -----
- * Monta o parágrafo a partir dos indicadores calculados de verdade — nunca um
- * texto fixo por ticker. Linguagem estritamente factual (RN-01): descreve a
- * condição técnica e o valor observado, sem linguagem de recomendação. */
-
-function gerarAnaliseAtivo(ticker) {
-  const { candles, ind } = seriesOf(ticker);
-  const last = candles[candles.length - 1];
-  const rsi14 = lastDefined(ind.rsi14);
-  const sma50 = lastDefined(ind.sma50);
-  const volRel = lastDefined(ind.volRel);
-  const bbUpper = lastDefined(ind.bollinger.upper);
-  const bbLower = lastDefined(ind.bollinger.lower);
-  const frases = [];
-
-  if (rsi14 != null) {
-    const faixa = rsi14 <= 30 ? 'na faixa de sobrevenda (≤ 30)' : rsi14 >= 70 ? 'na faixa de sobrecompra (≥ 70)' : 'em região neutra (entre 30 e 70)';
-    frases.push(`O RSI(14) está em ${fmtNum(rsi14, 1)}, ${faixa}.`);
-  }
-
-  if (sma50 != null) {
-    const dist = ((last.close - sma50) / sma50) * 100;
-    frases.push(`O preço está ${fmtPct(dist)} em relação à média móvel de 50 períodos (${fmtNum(sma50, 2)}).`);
-  }
-
-  if (bbUpper != null && last.close >= bbUpper) {
-    frases.push(`O fechamento tocou ou superou a banda superior de Bollinger (${fmtNum(bbUpper, 2)}).`);
-  } else if (bbLower != null && last.close <= bbLower) {
-    frases.push(`O fechamento tocou ou rompeu a banda inferior de Bollinger (${fmtNum(bbLower, 2)}).`);
-  }
-
-  if (volRel != null) frases.push(`O volume relativo é de ${fmtNum(volRel, 2)}× em relação à média de 20 pregões.`);
-
-  const sinalAtivo = SIGNALS.find((s) => s.ticker === ticker && !s.data_desativacao);
-  if (sinalAtivo) {
-    const regra = ruleOf(sinalAtivo.regra_id);
-    const bt = BACKTESTS[sinalAtivo.regra_id];
-    const horas = Math.max(1, Math.round((Date.now() - new Date(sinalAtivo.data_ativacao).getTime()) / 3_600_000));
-    const contexto = Object.entries(sinalAtivo.contexto)
-      .map(([k, v]) => `${k} em ${fmtNum(v, 2)}`)
-      .join(', ');
-    frases.push(
-      `O sinal "${regra.nome}" foi ativado há ${horas} h, com ${contexto} no momento da ativação. ` +
-        `Em ${bt.ocorrencias} ocorrências desta mesma condição nos últimos 24 meses, o retorno médio observado foi de ` +
-        `${fmtPct(bt.ret5)} em 5 pregões, ${fmtPct(bt.ret20)} em 20 pregões e ${fmtPct(bt.ret60)} em 60 pregões.`,
-    );
-  } else {
-    frases.push('Não há sinal técnico ativo para este ativo no momento.');
-  }
-
-  return frases.join(' ');
-}

@@ -14,7 +14,6 @@ import {
   LogOut,
   Menu,
   Sun,
-  Trophy,
   X,
   PanelLeftClose,
   PanelLeftOpen,
@@ -33,7 +32,6 @@ const NAV_GROUPS = [
     items: [
       { to: '/', label: 'Dashboard', icon: LayoutDashboard },
       { to: '/portfolio', label: 'Portfólio', icon: PieChart },
-      { to: '/rankings', label: 'Rankings', icon: Trophy },
       { to: '/comparar', label: 'Comparador', icon: GitCompare },
     ],
   },
