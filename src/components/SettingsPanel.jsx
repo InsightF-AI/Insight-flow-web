@@ -225,7 +225,7 @@ export default function SettingsPanel() {
 
       <DadosCard usuario={usuario} watchlist={watchlist} posicoes={posicoes} operacoes={operacoes} />
 
-      {/* só em `npm run dev`: num build publicado os alternadores não têm efeito (ver delayRead). */}
+      {/* só em `npm run dev`: num build publicado os alternadores não têm efeito (ver apiFetch). */}
       {import.meta.env.DEV && (
         <Card title={<SectionTitle icon={Bug} tone="amber">Modo desenvolvedor</SectionTitle>}>
           <Toggle

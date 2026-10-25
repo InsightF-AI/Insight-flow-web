@@ -5,11 +5,13 @@ import { notificarDisparo } from '../lib/notify.js';
 
 export const useWatchlist = () => useQuery({ queryKey: ['watchlist'], queryFn: () => api.getWatchlist() });
 export const useAsset = (t) => useQuery({ queryKey: ['asset', t], queryFn: () => api.getAsset(t), enabled: !!t });
-export const useHistory = (t, p) =>
-  useQuery({ queryKey: ['history', t, p], queryFn: () => api.getHistory(t, p), enabled: !!t });
-export const useIndicators = (t) =>
-  useQuery({ queryKey: ['indicators', t], queryFn: () => api.getIndicatorSnapshot(t), enabled: !!t });
-export const useSignals = (params) => useQuery({ queryKey: ['signals', params], queryFn: () => api.getSignals(params) });
+// `habilitado`: a tela do ativo só busca histórico/indicadores/sinais de ativo da watchlist (os demais não têm dados na API).
+export const useHistory = (t, p, habilitado = true) =>
+  useQuery({ queryKey: ['history', t, p], queryFn: () => api.getHistory(t, p), enabled: !!t && habilitado });
+export const useIndicators = (t, habilitado = true) =>
+  useQuery({ queryKey: ['indicators', t], queryFn: () => api.getIndicatorSnapshot(t), enabled: !!t && habilitado });
+export const useSignals = (params, habilitado = true) =>
+  useQuery({ queryKey: ['signals', params], queryFn: () => api.getSignals(params), enabled: habilitado });
 export const useSearch = (termo) => useQuery({ queryKey: ['search', termo], queryFn: () => api.searchAssets(termo) });
 export const useOperations = () => useQuery({ queryKey: ['operations'], queryFn: () => api.getOperations() });
 export const usePositions = () => useQuery({ queryKey: ['positions'], queryFn: () => api.getPositions() });
@@ -87,7 +89,8 @@ export function useWatchlistMutations() {
   // onSettled retorna a promise: a mutation só sai de isPending quando a lista já recarregou, então o
   // botão não volta ao estado antigo (e aceita outro clique) entre a chamada e o refetch. Recarrega
   // também no erro (ex: 502 do proxy depois de o servidor ter aplicado a mudança), pra tela refletir o real.
-  const inv = () => qc.invalidateQueries({ queryKey: ['watchlist'] });
+  // a cotação na tela do ativo (['asset']) só existe enquanto ele está na watchlist.
+  const inv = () => Promise.all(['watchlist', 'asset'].map((k) => qc.invalidateQueries({ queryKey: [k] })));
   const avisarErro = (acao) => (err, ticker) =>
     pushToast({ titulo: `${ticker} — não foi possível ${acao}`, texto: err.message, link: `/ativo/${ticker}` });
   return {

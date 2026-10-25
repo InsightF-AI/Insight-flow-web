@@ -57,3 +57,34 @@ describe('api.login', () => {
     await expect(api.login({ email: 'sem-arroba', senha: '123' })).rejects.toThrow('E-mail inválido');
   });
 });
+
+describe('ativo fora da watchlist', () => {
+  it('não inventa histórico, sinais nem análise: pede pra adicionar à watchlist', async () => {
+    fetch.mockResolvedValue(respostaDoFetch([]));
+
+    for (const chamada of [
+      () => api.getHistory('WEGE3', '1m'),
+      () => api.getIndicatorSnapshot('WEGE3'),
+      () => api.getSignals({ ticker: 'WEGE3' }),
+      () => api.getAssetAnalysis('WEGE3'),
+    ]) {
+      await expect(chamada()).rejects.toMatchObject({ code: 'FORA_DA_WATCHLIST' });
+    }
+    // só consultou a watchlist — nenhuma rota de ativo foi chamada sem ativo_id.
+    expect(fetch.mock.calls.every(([caminho]) => caminho === '/api/v1/watchlist')).toBe(true);
+  });
+
+  it('mostra o ativo pela busca, sem cotação', async () => {
+    fetch.mockImplementation(async (caminho) =>
+      respostaDoFetch(
+        caminho.startsWith('/api/v1/ativos/buscar')
+          ? [{ ticker: 'WEGE3', nome: 'WEG ON', tipo: 'ACAO', setor: 'Bens Industriais', moeda: 'BRL' }]
+          : [],
+      ),
+    );
+
+    const ativo = await api.getAsset('WEGE3');
+
+    expect(ativo).toMatchObject({ ticker: 'WEGE3', nome: 'WEG ON', fonte: 'brapi', cotacao: null });
+  });
+});
