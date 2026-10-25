@@ -345,7 +345,11 @@ export default function Dashboard() {
             {resumo ? (
               <>
                 <p className="text-fg-1">{resumo.texto}</p>
-                <p className="mt-3 text-xs text-fg-3">gerado em {fmtDateTime(resumo.gerado_em)}</p>
+                <p className="mt-3 text-xs text-fg-3">
+                  gerado em {fmtDateTime(resumo.gerado_em)}
+                  {/* o servidor gera às 18h30 e só para quem tem operações — o último pode ser de outro dia. */}
+                  {new Date(resumo.gerado_em).toDateString() !== new Date().toDateString() && ' · não é o resumo de hoje'}
+                </p>
                 <Disclaimer className="mt-3" />
               </>
             ) : erroResumo ? (
