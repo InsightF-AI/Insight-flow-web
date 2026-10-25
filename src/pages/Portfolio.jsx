@@ -6,7 +6,7 @@ import { useMediaQuery } from '../hooks/useMediaQuery.js';
 import { Card, Kpi, Pill, Skeleton, Empty, ErrorState, SectionTitle } from '../components/ui.jsx';
 import { BenchmarkChart, DonutChart } from '../components/Charts.jsx';
 import OperationModal from '../components/OperationModal.jsx';
-import { fmtBRL, fmtNum, fmtPct, fmtDate, trendClass } from '../lib/format.js';
+import { fmtBRL, fmtNum, fmtPct, fmtPctOuTraco, fmtDate, trendClass } from '../lib/format.js';
 
 const BAR_COLORS = [
   'var(--chart-sma20)',
@@ -70,6 +70,7 @@ export default function Portfolio() {
   const [tipoFiltro, setTipoFiltro] = useState('TODAS');
   const { data: pos, isLoading, isError: erroPos, refetch: refazerPos } = usePositions();
   const { data: resumo, isError: erroResumo, refetch: refazerResumo } = usePortfolio();
+  const contraIbov = resumo?.benchmarks.ibovespa == null ? null : resumo.resultado_pct - resumo.benchmarks.ibovespa;
   const { data: dist, isError: erroDist, refetch: refazerDist } = useDistribution();
   const { data: ops, isLoading: carregandoOps, isError: erroOps, refetch: refazerOps } = useOperations();
   const deleteOp = useDeleteOperation();
@@ -116,18 +117,18 @@ export default function Portfolio() {
         <Kpi
           icon={TrendingUp}
           iconTone={resumo?.resultado >= 0 ? 'up' : 'down'}
-          label="Resultado"
+          label="Resultado não realizado"
           value={resumo ? fmtBRL(resumo.resultado) : '—'}
           tone={resumo ? trendClass(resumo.resultado) : ''}
-          hint={resumo ? fmtPct(resumo.resultado_pct) : ''}
+          hint={resumo ? `${fmtPct(resumo.resultado_pct)} · realizado ${fmtBRL(resumo.lucro_realizado)}` : ''}
         />
         <Kpi
           icon={Scale}
           iconTone="purple"
           label="Contra benchmarks"
-          value={resumo ? fmtPct(resumo.resultado_pct - resumo.benchmarks.ibovespa) : '—'}
-          tone={resumo ? trendClass(resumo.resultado_pct - resumo.benchmarks.ibovespa) : ''}
-          hint={resumo ? `Ibovespa ${fmtPct(resumo.benchmarks.ibovespa)} · CDI ${fmtPct(resumo.benchmarks.cdi)}` : ''}
+          value={fmtPctOuTraco(contraIbov)}
+          tone={trendClass(contraIbov)}
+          hint={resumo ? `Ibovespa ${fmtPctOuTraco(resumo.benchmarks.ibovespa)} · CDI ${fmtPctOuTraco(resumo.benchmarks.cdi)}` : ''}
         />
       </div>
 

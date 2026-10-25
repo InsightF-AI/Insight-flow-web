@@ -10,7 +10,7 @@ import PriceChart from '../components/PriceChart.jsx';
 import { RsiChart, MacdChart } from '../components/Charts.jsx';
 import OperationModal from '../components/OperationModal.jsx';
 import Disclaimer from '../components/Disclaimer.jsx';
-import { fmtNum, fmtPct, fmtCompact, sinceNow, trendClass } from '../lib/format.js';
+import { fmtNum, fmtPct, fmtCompact, fmtDateTime, sinceNow, trendClass } from '../lib/format.js';
 
 const OVERLAYS = [
   { k: 'sma20', label: 'SMA 20', color: 'var(--chart-sma20)' },
@@ -273,9 +273,16 @@ export default function AssetDetail() {
                 </div>
               ) : analysis ? (
                 <>
+                  {analysis.desatualizada && (
+                    <p className="mb-3 flex items-start gap-2.5 rounded-sm border border-border-soft bg-elevated px-3 py-2.5 text-xs text-fg-2">
+                      <CloudOff size={16} className="mt-0.5 shrink-0 text-fg-3" />
+                      A IA não conseguiu gerar uma análise nova agora — esta é a última salva, de{' '}
+                      {fmtDateTime(analysis.gerado_em)}.
+                    </p>
+                  )}
                   <p className="whitespace-pre-line text-fg-1">{analysis.texto}</p>
                   <p className="mt-3 text-xs text-fg-3">
-                    provedor {analysis.provedor} · modelo {analysis.modelo}
+                    gerada em {fmtDateTime(analysis.gerado_em)} · modelo {analysis.modelo}
                     {analysis.em_cache ? ' · em cache' : ''}
                   </p>
                   <Disclaimer className="mt-3" />
