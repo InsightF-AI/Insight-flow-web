@@ -30,7 +30,7 @@ import { Card, Kpi, Pill, Skeleton, Empty, ErrorState, SectionTitle } from '../c
 import { RsiChart } from '../components/Charts.jsx';
 import PriceChart from '../components/PriceChart.jsx';
 import Disclaimer from '../components/Disclaimer.jsx';
-import { fmtBRL, fmtNum, fmtPct, sinceNow, trendClass } from '../lib/format.js';
+import { fmtBRL, fmtNum, fmtPct, fmtPctOuTraco, fmtDateTime, sinceNow, trendClass } from '../lib/format.js';
 
 function MarketChartCard({ watchlist }) {
   const [ticker, setTicker] = useState('');
@@ -224,13 +224,13 @@ export default function Dashboard() {
           label="Resultado não realizado"
           value={portfolio ? fmtBRL(portfolio.resultado) : '—'}
           tone={portfolio ? trendClass(portfolio.resultado) : ''}
-          hint={portfolio ? fmtPct(portfolio.resultado_pct) : ''}
+          hint={portfolio ? `${fmtPct(portfolio.resultado_pct)} · realizado ${fmtBRL(portfolio.lucro_realizado)}` : ''}
         />
         <Kpi
           icon={Activity}
-          iconTone={portfolio?.variacao_dia_pct >= 0 ? 'up' : 'down'}
+          iconTone={(portfolio?.variacao_dia_pct ?? 0) >= 0 ? 'up' : 'down'}
           label="Variação do dia"
-          value={portfolio ? fmtPct(portfolio.variacao_dia_pct) : '—'}
+          value={fmtPctOuTraco(portfolio?.variacao_dia_pct)}
           tone={portfolio ? trendClass(portfolio.variacao_dia_pct) : ''}
           hint="Média das posições, ponderada pelo valor"
         />
@@ -345,6 +345,11 @@ export default function Dashboard() {
             {resumo ? (
               <>
                 <p className="text-fg-1">{resumo.texto}</p>
+                <p className="mt-3 text-xs text-fg-3">
+                  gerado em {fmtDateTime(resumo.gerado_em)}
+                  {/* o servidor gera às 18h30 e só para quem tem operações — o último pode ser de outro dia. */}
+                  {new Date(resumo.gerado_em).toDateString() !== new Date().toDateString() && ' · não é o resumo de hoje'}
+                </p>
                 <Disclaimer className="mt-3" />
               </>
             ) : erroResumo ? (

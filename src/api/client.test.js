@@ -88,3 +88,48 @@ describe('ativo fora da watchlist', () => {
     expect(ativo).toMatchObject({ ticker: 'WEGE3', nome: 'WEG ON', fonte: 'brapi', cotacao: null });
   });
 });
+
+describe('api.getPortfolioSummary', () => {
+  const posicao = (ativo_id, ticker, valor) => ({
+    ativo_id,
+    ticker,
+    quantidade: '10',
+    preco_medio: '10',
+    valor_mercado: String(valor),
+    valor_mercado_brl: String(valor),
+    lucro_nao_realizado: '0',
+    lucro_realizado: '0',
+    cotacao_atual: '10',
+  });
+
+  it('não transforma cotação nem benchmark que falhou em 0%', async () => {
+    fetch.mockImplementation(async (caminho) => {
+      const rotas = {
+        '/api/v1/portfolio/rentabilidade': respostaDoFetch({
+          custo_base_brl: '1000',
+          valor_mercado_brl: '1100',
+          lucro_nao_realizado_brl: '100',
+          lucro_realizado_brl: '40',
+          percentual: '0.1',
+        }),
+        '/api/v1/portfolio/benchmark?benchmark=CDI': respostaDoFetch({ rentabilidade_benchmark_percentual: '0.02' }),
+        '/api/v1/portfolio/benchmark?benchmark=IBOVESPA': respostaDoFetch({ detail: 'fora do ar' }, 503),
+        '/api/v1/portfolio/posicoes': respostaDoFetch([posicao('a1', 'PETR4', 600), posicao('a2', 'VALE3', 500)]),
+        '/api/v1/ativos/a1/cotacao': respostaDoFetch({ variacao_percentual: '2' }),
+        '/api/v1/ativos/a2/cotacao': respostaDoFetch({ detail: 'fora do ar' }, 503),
+      };
+      return rotas[caminho] ?? respostaDoFetch([]);
+    });
+
+    const resumo = await api.getPortfolioSummary();
+
+    // resultado acompanha o percentual da API (não realizado / custo); o realizado vem à parte.
+    expect(resumo.resultado).toBe(100);
+    expect(resumo.resultado_pct).toBe(10);
+    expect(resumo.lucro_realizado).toBe(40);
+    // VALE3 sem cotação fica fora da média, em vez de puxar a variação do dia pra baixo.
+    expect(resumo.variacao_dia_pct).toBe(2);
+    expect(resumo.benchmarks).toEqual({ cdi: 2, ibovespa: null });
+    expect(resumo.curva.map((p) => p.ibovespa)).toEqual([null, null]);
+  });
+});

@@ -498,7 +498,8 @@ export const api = {
           moeda: info.moeda ?? 'BRL',
           preco_medio: precoMedio,
           preco_atual: Number(p.cotacao_atual),
-          variacao_pct: cot ? Number(cot.variacao_percentual) : 0,
+          // null quando a cotação falha — fica fora da média do dia em vez de contar como 0%.
+          variacao_pct: cot ? Number(cot.variacao_percentual) : null,
           valor_atual: valorAtual,
           resultado,
           resultado_pct: custo ? (resultado / custo) * 100 : 0,
@@ -519,11 +520,17 @@ export const api = {
       apiFetch('/operacoes').catch(() => []),
     ]);
     const pct = fracaoParaPct(r.percentual) ?? 0;
-    const pctCdi = fracaoParaPct(cdi?.rentabilidade_benchmark_percentual) ?? 0;
-    const pctIbov = fracaoParaPct(ibov?.rentabilidade_benchmark_percentual) ?? 0;
+    // benchmark que falhou (ou sem dado no período) fica null — a tela mostra "—", não 0%.
+    const pctCdi = fracaoParaPct(cdi?.rentabilidade_benchmark_percentual);
+    const pctIbov = fracaoParaPct(ibov?.rentabilidade_benchmark_percentual);
     const valorTotal = Number(r.valor_mercado_brl);
-    const pesoTotal = pos.reduce((a, p) => a + p.valor_atual_brl, 0);
-    const variacaoDia = pesoTotal ? pos.reduce((a, p) => a + p.variacao_pct * p.valor_atual_brl, 0) / pesoTotal : 0;
+    // média do dia ponderada pelo valor, só entre as posições cuja cotação veio.
+    const comCotacao = pos.filter((p) => p.variacao_pct != null);
+    const pesoTotal = comCotacao.reduce((a, p) => a + p.valor_atual_brl, 0);
+    const variacaoDia = pesoTotal
+      ? comCotacao.reduce((a, p) => a + p.variacao_pct * p.valor_atual_brl, 0) / pesoTotal
+      : null;
+    const base100 = (v) => (v == null ? null : +(100 + v).toFixed(2));
     // a API devolve só a rentabilidade acumulada (não uma série histórica): o gráfico liga
     // o início (base 100, data da 1ª operação) ao valor de hoje, para carteira e benchmarks.
     const hoje = new Date().toISOString().slice(0, 10);
@@ -531,13 +538,15 @@ export const api = {
     return {
       valor_total: valorTotal,
       custo_total: Number(r.custo_base_brl),
-      resultado: Number(r.lucro_nao_realizado_brl) + Number(r.lucro_realizado_brl),
+      // `percentual` da API é o lucro não realizado sobre o custo — o valor acompanha o mesmo recorte.
+      resultado: Number(r.lucro_nao_realizado_brl),
       resultado_pct: pct,
+      lucro_realizado: Number(r.lucro_realizado_brl),
       variacao_dia_pct: variacaoDia,
       benchmarks: { cdi: pctCdi, ibovespa: pctIbov },
       curva: [
-        { data: inicio, carteira: 100, ibovespa: 100, cdi: 100 },
-        { data: hoje, carteira: +(100 + pct).toFixed(2), ibovespa: +(100 + pctIbov).toFixed(2), cdi: +(100 + pctCdi).toFixed(2) },
+        { data: inicio, carteira: 100, ibovespa: pctIbov == null ? null : 100, cdi: pctCdi == null ? null : 100 },
+        { data: hoje, carteira: base100(pct), ibovespa: base100(pctIbov), cdi: base100(pctCdi) },
       ],
     };
   },
@@ -697,6 +706,8 @@ export const api = {
       provedor: 'gemini',
       modelo: a.modelo,
       em_cache: a.em_cache,
+      // a IA falhou e o backend devolveu a última análise salva — a tela avisa a data dela.
+      desatualizada: a.desatualizada,
       gerado_em: a.gerado_em,
       disclaimer: a.aviso_legal,
     };

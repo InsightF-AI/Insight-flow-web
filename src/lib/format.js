@@ -5,6 +5,8 @@ export const fmtNum = (v, d = 2) =>
   new Intl.NumberFormat('pt-BR', { minimumFractionDigits: d, maximumFractionDigits: d }).format(v ?? 0);
 
 export const fmtPct = (v, d = 2) => `${v > 0 ? '+' : ''}${fmtNum(v, d)}%`;
+/** Percentual que pode não ter vindo da API (cotação ou benchmark fora do ar): "—" em vez de 0%. */
+export const fmtPctOuTraco = (v, d = 2) => (v == null ? '—' : fmtPct(v, d));
 
 export const fmtCompact = (v) =>
   new Intl.NumberFormat('pt-BR', { notation: 'compact', maximumFractionDigits: 1 }).format(v ?? 0);
