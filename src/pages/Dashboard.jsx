@@ -11,7 +11,6 @@ import {
   Activity,
   Radar,
   LineChart as LineChartIcon,
-  Newspaper,
   Landmark,
   Bitcoin,
   ChevronRight,
@@ -24,12 +23,10 @@ import {
   useDailySummary,
   useWatchlistMutations,
   useHistory,
-  useTopMovers,
-  useNews,
 } from '../hooks/queries.js';
 import { useMediaQuery } from '../hooks/useMediaQuery.js';
 import { generateCandles, PERIODS } from '../api/mock/assets.js';
-import { Card, Kpi, Pill, Skeleton, Empty, ErrorState, SectionTitle, Ilustrativo } from '../components/ui.jsx';
+import { Card, Kpi, Pill, Skeleton, Empty, ErrorState, SectionTitle } from '../components/ui.jsx';
 import { Sparkline, RsiChart } from '../components/Charts.jsx';
 import PriceChart from '../components/PriceChart.jsx';
 import Disclaimer from '../components/Disclaimer.jsx';
@@ -111,88 +108,6 @@ function MarketChartCard({ watchlist }) {
             <RsiChart candles={hist.candles} values={hist.indicators.rsi14} height={mobile ? 70 : 90} />
           </div>
         </>
-      )}
-    </Card>
-  );
-}
-
-function TopMoversCard() {
-  const { data, isError, refetch } = useTopMovers();
-  return (
-    <Card
-      title={<SectionTitle icon={TrendingUp}>Maiores altas e baixas</SectionTitle>}
-      action={<Ilustrativo motivo="A API ainda não tem rota de maiores altas e baixas; os valores são ilustrativos." />}
-      bodyClass="p-0"
-    >
-      {isError ? (
-        <ErrorState onRetry={refetch} />
-      ) : !data ? (
-        <div className="grid gap-2 p-4">
-          <Skeleton /> <Skeleton /> <Skeleton />
-        </div>
-      ) : (
-        <div className="grid grid-cols-2 divide-x divide-border-soft">
-          <div>
-            <div className="px-4 pt-3 text-[11px] font-semibold uppercase tracking-wider text-up">Altas</div>
-            <ul>
-              {data.altas.map((q) => (
-                <li key={q.ticker}>
-                  <Link to={`/ativo/${q.ticker}`} className="flex items-center justify-between px-4 py-2 hover:bg-elevated">
-                    <span className="num text-sm font-bold text-fg-0">{q.ticker}</span>
-                    <span className="num text-sm font-semibold text-up">{fmtPct(q.variacao_pct)}</span>
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          </div>
-          <div>
-            <div className="px-4 pt-3 text-[11px] font-semibold uppercase tracking-wider text-down">Baixas</div>
-            <ul>
-              {data.baixas.map((q) => (
-                <li key={q.ticker}>
-                  <Link to={`/ativo/${q.ticker}`} className="flex items-center justify-between px-4 py-2 hover:bg-elevated">
-                    <span className="num text-sm font-bold text-fg-0">{q.ticker}</span>
-                    <span className="num text-sm font-semibold text-down">{fmtPct(q.variacao_pct)}</span>
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          </div>
-        </div>
-      )}
-    </Card>
-  );
-}
-
-function NewsCard() {
-  const { data: news, isError, refetch } = useNews();
-  return (
-    <Card
-      title={<SectionTitle icon={Newspaper}>Notícias do mercado</SectionTitle>}
-      action={<Ilustrativo motivo="A API ainda não tem rota de notícias; as manchetes são ilustrativas." />}
-      bodyClass="p-0"
-    >
-      {isError ? (
-        <ErrorState onRetry={refetch} />
-      ) : !news ? (
-        <div className="grid gap-2 p-4">
-          <Skeleton /> <Skeleton /> <Skeleton className="h-4 w-2/3" />
-        </div>
-      ) : news.length === 0 ? (
-        <Empty>Nenhuma notícia no momento.</Empty>
-      ) : (
-        <ul>
-          {news.slice(0, 5).map((n) => (
-            <li key={n.id} className="border-b border-border-soft px-4 py-2.5 last:border-0">
-              <Link to={`/ativo/${n.ticker}`} className="block hover:text-accent">
-                <p className="text-sm text-fg-1">{n.titulo}</p>
-                <p className="mt-1 text-xs text-fg-3">
-                  <span className="num font-semibold">{n.ticker}</span> · {n.fonte} · há {sinceNow(n.data)}
-                </p>
-              </Link>
-            </li>
-          ))}
-        </ul>
       )}
     </Card>
   );
@@ -424,10 +339,6 @@ export default function Dashboard() {
             </div>
           )}
         </Card>
-
-          <TopMoversCard />
-
-          <NewsCard />
         </div>
 
         <div className="grid content-start gap-6">

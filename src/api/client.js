@@ -1,12 +1,11 @@
 /**
  * Camada de acesso a dados — ponto único de integração com o backend FastAPI (`/api/v1`,
  * via proxy do Vite). O que a API expõe vem dela; o que ela ainda não expõe (notícias,
- * rankings, score, sessões, perfil) continua em mock em memória, marcado nos métodos.
+ * rankings, score) fica fora da tela até o backend ter a rota.
  */
-import { ASSETS, byTicker, generateCandles } from './mock/assets.js';
+import { byTicker, generateCandles } from './mock/assets.js';
 import { RULES, SIGNALS, BACKTESTS, ruleOf } from './mock/signals.js';
 import { DISCLAIMER } from './mock/ai.js';
-import { NEWS } from './mock/news.js';
 import { computeIndicators, lastDefined } from '../lib/indicators.js';
 import { fmtBRL, fmtPct, fmtNum } from '../lib/format.js';
 import { useAuthStore, useUiStore } from '../store/index.js';
@@ -433,51 +432,6 @@ export const api = {
   async getRules() {
     await delay(140);
     return RULES;
-  },
-  async getScore(ticker) {
-    await delayRead();
-    const ativos = SIGNALS.filter((s) => s.ticker === ticker && !s.data_desativacao);
-    const soma = ativos.reduce((a, s) => a + (ruleOf(s.regra_id)?.peso ?? 0), 0);
-    return { score: +Math.min(soma * 100, 100).toFixed(0), sinais: ativos.length };
-  },
-  async getTopMovers(limit = 5) {
-    await delayRead();
-    const quotes = ASSETS.map((a) => ({ ...quoteOf(a.ticker), nome: a.nome, tipo: a.tipo }));
-    return {
-      altas: [...quotes].sort((a, b) => b.variacao_pct - a.variacao_pct).slice(0, limit),
-      baixas: [...quotes].sort((a, b) => a.variacao_pct - b.variacao_pct).slice(0, limit),
-    };
-  },
-  /** Rankings de mercado (RF-05 a RF-08) — altas, baixas, volume relativo e sinais, no estilo dos rankings do investidor10. */
-  async getRankings(limit = 6) {
-    await delayRead();
-    const quotes = ASSETS.map((a) => ({ ...quoteOf(a.ticker), nome: a.nome, tipo: a.tipo }));
-    const comIndicadores = ASSETS.map((a) => {
-      const ind = computeIndicators(generateCandles(a.ticker));
-      return { ticker: a.ticker, nome: a.nome, tipo: a.tipo, volRel: lastDefined(ind.volRel) ?? 0 };
-    });
-    const comSinais = ASSETS.map((a) => ({
-      ticker: a.ticker,
-      nome: a.nome,
-      tipo: a.tipo,
-      sinais: SIGNALS.filter((s) => s.ticker === a.ticker && !s.data_desativacao).length,
-    }));
-    return {
-      altas: [...quotes].sort((a, b) => b.variacao_pct - a.variacao_pct).slice(0, limit),
-      baixas: [...quotes].sort((a, b) => a.variacao_pct - b.variacao_pct).slice(0, limit),
-      volume: [...comIndicadores].sort((a, b) => b.volRel - a.volRel).slice(0, limit),
-      sinais: comSinais
-        .filter((s) => s.sinais > 0)
-        .sort((a, b) => b.sinais - a.sinais)
-        .slice(0, limit),
-    };
-  },
-  /** Notícias de mercado (opcionalmente filtradas por ativo). */
-  async getNews(ticker, limit = 8) {
-    await delayRead();
-    return NEWS.filter((n) => !ticker || n.ticker === ticker)
-      .sort((a, b) => b.data.localeCompare(a.data))
-      .slice(0, limit);
   },
 
   /* ----- watchlist (RF-03, RN-08) ----- */

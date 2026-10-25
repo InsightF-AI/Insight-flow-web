@@ -10,10 +10,6 @@ export const useHistory = (t, p) =>
 export const useIndicators = (t) =>
   useQuery({ queryKey: ['indicators', t], queryFn: () => api.getIndicatorSnapshot(t), enabled: !!t });
 export const useSignals = (params) => useQuery({ queryKey: ['signals', params], queryFn: () => api.getSignals(params) });
-export const useScore = (t) => useQuery({ queryKey: ['score', t], queryFn: () => api.getScore(t), enabled: !!t });
-export const useTopMovers = () => useQuery({ queryKey: ['topMovers'], queryFn: () => api.getTopMovers() });
-export const useRankings = () => useQuery({ queryKey: ['rankings'], queryFn: () => api.getRankings() });
-export const useNews = (ticker) => useQuery({ queryKey: ['news', ticker ?? 'all'], queryFn: () => api.getNews(ticker) });
 export const useSearch = (termo) => useQuery({ queryKey: ['search', termo], queryFn: () => api.searchAssets(termo) });
 export const useOperations = () => useQuery({ queryKey: ['operations'], queryFn: () => api.getOperations() });
 export const usePositions = () => useQuery({ queryKey: ['positions'], queryFn: () => api.getPositions() });
