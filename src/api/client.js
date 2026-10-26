@@ -1,7 +1,7 @@
 /**
  * Camada de acesso a dados — ponto único de integração com o backend FastAPI (`/api/v1`,
  * via proxy do Vite). O que a API expõe vem dela; o que ela ainda não expõe (notícias,
- * rankings, score) fica fora da tela até o backend ter a rota.
+ * rankings de mercado, score) fica fora da tela até o backend ter a rota.
  */
 import { DISCLAIMER } from './mock/ai.js';
 import { computeIndicators } from '../lib/indicators.js';
@@ -420,6 +420,37 @@ export const api = {
     });
     entry.notificar = data.notificar;
     return { ok: true };
+  },
+  /** Rankings (RF-05 a RF-08) dos ativos da watchlist — a API não tem rota de ranking de mercado,
+   * então ordena o que ela já devolve por ativo: cotação, sinais ativos e volume relativo. */
+  async getRankings(limit = 6) {
+    const lista = await api.getWatchlist();
+    const comVolume = await Promise.all(
+      lista.map(async (it) => {
+        const id = watchlistIndex.get(it.ticker)?.id;
+        const volRel = await apiFetch(`/ativos/${id}/indicadores`)
+          .then((ind) => ind.find((i) => i.tipo === 'VOLUME_RELATIVO')?.valor)
+          .catch(() => null);
+        return { ...it, volRel: volRel == null ? null : Number(volRel) };
+      }),
+    );
+    const ativos = comVolume.map((it) => ({
+      ticker: it.ticker,
+      nome: it.nome,
+      tipo: it.tipo,
+      variacao_pct: it.cotacao?.variacao_pct,
+      volRel: it.volRel,
+      sinais: it.sinais,
+    }));
+    // ativo sem cotação ou sem volume fica fora daquele ranking, em vez de entrar como 0.
+    const comCotacao = ativos.filter((a) => a.variacao_pct != null);
+    return {
+      total: ativos.length,
+      altas: comCotacao.filter((a) => a.variacao_pct > 0).sort((a, b) => b.variacao_pct - a.variacao_pct).slice(0, limit),
+      baixas: comCotacao.filter((a) => a.variacao_pct < 0).sort((a, b) => a.variacao_pct - b.variacao_pct).slice(0, limit),
+      volume: ativos.filter((a) => a.volRel != null).sort((a, b) => b.volRel - a.volRel).slice(0, limit),
+      sinais: ativos.filter((a) => a.sinais > 0).sort((a, b) => b.sinais - a.sinais).slice(0, limit),
+    };
   },
 
   /* ----- portfólio (RF-10, RF-11, RF-12) ----- */

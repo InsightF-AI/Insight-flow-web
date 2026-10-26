@@ -12,7 +12,8 @@ export const useIndicators = (t, habilitado = true) =>
   useQuery({ queryKey: ['indicators', t], queryFn: () => api.getIndicatorSnapshot(t), enabled: !!t && habilitado });
 export const useSignals = (params, habilitado = true) =>
   useQuery({ queryKey: ['signals', params], queryFn: () => api.getSignals(params), enabled: habilitado });
-export const useSearch = (termo) => useQuery({ queryKey: ['search', termo], queryFn: () => api.searchAssets(termo) });
+export const useRankings = () => useQuery({ queryKey: ['rankings'], queryFn: () => api.getRankings() });
+export const useSearch =(termo) => useQuery({ queryKey: ['search', termo], queryFn: () => api.searchAssets(termo) });
 export const useOperations = () => useQuery({ queryKey: ['operations'], queryFn: () => api.getOperations() });
 export const usePositions = () => useQuery({ queryKey: ['positions'], queryFn: () => api.getPositions() });
 export const usePortfolio = () => useQuery({ queryKey: ['portfolio'], queryFn: () => api.getPortfolioSummary() });

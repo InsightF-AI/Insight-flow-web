@@ -133,3 +133,38 @@ describe('api.getPortfolioSummary', () => {
     expect(resumo.curva.map((p) => p.ibovespa)).toEqual([null, null]);
   });
 });
+
+describe('api.getRankings', () => {
+  const item = (id, ticker) => ({
+    ativo: { id, ticker, nome: `${ticker} SA`, tipo: 'ACAO', setor: null, moeda: 'BRL' },
+    notificar: false,
+    adicionado_em: '2026-10-01T00:00:00Z',
+  });
+
+  it('ordena os ativos da watchlist e deixa de fora o que não tem dado, em vez de usar 0', async () => {
+    const cotacoes = { a: '2.5', b: '-1.2', c: '0.8' };
+    const volumes = { a: '0.9', b: '1.7' };
+    const sinais = { a: [], b: [{ data_desativacao: null }], c: [{ data_desativacao: null }, { data_desativacao: null }] };
+    fetch.mockImplementation(async (caminho) => {
+      if (caminho === '/api/v1/watchlist') return respostaDoFetch([item('a', 'PETR4'), item('b', 'VALE3'), item('c', 'ITUB4'), item('d', 'WEGE3')]);
+      const [, , , id, rota] = caminho.split('/').slice(1);
+      if (rota === 'sinais') return respostaDoFetch(sinais[id] ?? []);
+      if (rota === 'cotacao') {
+        if (!cotacoes[id]) return respostaDoFetch({ detail: 'Fonte indisponivel' }, 503);
+        return respostaDoFetch({ preco: '10', variacao: '0', variacao_percentual: cotacoes[id], volume: '100' });
+      }
+      if (rota === 'indicadores') {
+        return respostaDoFetch(volumes[id] ? [{ tipo: 'VOLUME_RELATIVO', valor: volumes[id] }] : []);
+      }
+      throw new Error(`rota inesperada: ${caminho}`);
+    });
+
+    const r = await api.getRankings();
+
+    expect(r.total).toBe(4);
+    expect(r.altas.map((a) => a.ticker)).toEqual(['PETR4', 'ITUB4']);
+    expect(r.baixas.map((a) => a.ticker)).toEqual(['VALE3']);
+    expect(r.volume.map((a) => [a.ticker, a.volRel])).toEqual([['VALE3', 1.7], ['PETR4', 0.9]]);
+    expect(r.sinais.map((a) => [a.ticker, a.sinais])).toEqual([['ITUB4', 2], ['VALE3', 1]]);
+  });
+});
