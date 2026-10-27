@@ -12,7 +12,10 @@ export const useIndicators = (t, habilitado = true) =>
   useQuery({ queryKey: ['indicators', t], queryFn: () => api.getIndicatorSnapshot(t), enabled: !!t && habilitado });
 export const useSignals = (params, habilitado = true) =>
   useQuery({ queryKey: ['signals', params], queryFn: () => api.getSignals(params), enabled: habilitado });
-export const useRankings = () => useQuery({ queryKey: ['rankings'], queryFn: () => api.getRankings() });
+// o RSS é consultado no máximo a cada 10 min (o Nginx também guarda em cache).
+export const useNews = (tickers) =>
+  useQuery({ queryKey: ['news', tickers], queryFn: () => api.getNews(tickers), enabled: tickers.length > 0, staleTime: 10 * 60_000 });
+export const useRankings =() => useQuery({ queryKey: ['rankings'], queryFn: () => api.getRankings() });
 export const useSearch =(termo) => useQuery({ queryKey: ['search', termo], queryFn: () => api.searchAssets(termo) });
 export const useOperations = () => useQuery({ queryKey: ['operations'], queryFn: () => api.getOperations() });
 export const usePositions = () => useQuery({ queryKey: ['positions'], queryFn: () => api.getPositions() });

@@ -81,4 +81,6 @@ jobs:
           codigo="$(curl -sS -o /dev/null -w '%{http_code}' "http://localhost:8080/api/v1/ativos/buscar?termo=PETR")"
           echo "proxy /api -> $codigo"
           test "$codigo" = 401
+          curl -fsS "http://localhost:8080/noticias/rss?q=PETR4&hl=pt-BR&gl=BR&ceid=BR:pt-419" | grep -q '<rss'
+          echo "proxy /noticias/rss -> ok"
           docker rm -f web

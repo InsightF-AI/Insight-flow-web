@@ -14,6 +14,7 @@ import {
   Landmark,
   Bitcoin,
   ChevronRight,
+  Newspaper,
 } from 'lucide-react';
 import {
   useWatchlist,
@@ -23,6 +24,7 @@ import {
   useDailySummary,
   useWatchlistMutations,
   useHistory,
+  useNews,
 } from '../hooks/queries.js';
 import { useMediaQuery } from '../hooks/useMediaQuery.js';
 import { PERIODS } from '../api/mock/assets.js';
@@ -194,6 +196,43 @@ function RankingColumn({ icon: Icon, tone, label, subtitulo, itens }) {
   );
 }
 
+function NewsCard({ watchlist }) {
+  const tickers = watchlist.map((w) => w.ticker).sort();
+  const { data: news, isError, refetch } = useNews(tickers);
+  return (
+    <Card
+      title={<SectionTitle icon={Newspaper}>Notícias da watchlist</SectionTitle>}
+      action={<span className="text-xs text-fg-3">via Google News</span>}
+      bodyClass="p-0"
+    >
+      {isError ? (
+        <ErrorState message="Não foi possível carregar as notícias." onRetry={refetch} />
+      ) : !news ? (
+        <div className="grid gap-2 p-4">
+          <Skeleton /> <Skeleton /> <Skeleton className="h-4 w-2/3" />
+        </div>
+      ) : news.length === 0 ? (
+        <Empty>Nenhuma notícia sobre os ativos da watchlist nos últimos 7 dias.</Empty>
+      ) : (
+        <ul>
+          {news.map((n) => (
+            <li key={n.id} className="border-b border-border-soft px-4 py-2.5 last:border-0">
+              <a href={n.link} target="_blank" rel="noopener noreferrer" className="block hover:text-accent">
+                <p className="text-sm text-fg-1">{n.titulo}</p>
+                <p className="mt-1 text-xs text-fg-3">
+                  {n.ticker && <span className="num font-semibold">{n.ticker} · </span>}
+                  {n.fonte}
+                  {n.data && ` · há ${sinceNow(n.data)}`}
+                </p>
+              </a>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
+  );
+}
+
 export default function Dashboard() {
   const { data: watchlist, isLoading, isError: erroWatchlist, refetch: refazerWatchlist } = useWatchlist();
   const { data: signals, isError: erroSignals, refetch: refazerSignals } = useSignals({ apenasAtivos: true });
@@ -335,6 +374,8 @@ export default function Dashboard() {
             </div>
           )}
         </Card>
+
+        {(watchlist ?? []).length > 0 && <NewsCard watchlist={watchlist} />}
         </div>
 
         <div className="grid content-start gap-6">
