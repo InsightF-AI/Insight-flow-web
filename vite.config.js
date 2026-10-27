@@ -25,6 +25,12 @@ export default defineConfig(({ mode }) => {
           // WebSocket de notificações (/api/v1/notificacoes/ws) passa pelo mesmo proxy.
           ws: true,
         },
+        // RSS do Google News para o card de notícias (em produção, quem faz isso é o Nginx).
+        '/noticias/rss': {
+          target: 'https://news.google.com',
+          changeOrigin: true,
+          rewrite: (caminho) => caminho.replace(/^\/noticias\/rss/, '/rss/search'),
+        },
       },
     },
   };

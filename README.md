@@ -106,11 +106,15 @@ Todo o acesso a dados passa por `src/api/client.js`.
 | Vem da API | Ainda ilustrativo (selo na tela) | Não disponível (a tela avisa) |
 |---|---|---|
 | cadastro, login, refresh e logout | | alterar nome, e-mail ou senha |
-| watchlist, busca, cotação, histórico, indicadores | notícias | recuperação de senha por e-mail |
+| watchlist, busca, cotação, histórico, indicadores | | recuperação de senha por e-mail |
 | sinais e backtest, alertas, notificações (REST + WebSocket), web push | score de oportunidade (a API não expõe o peso das regras) | |
 | operações, posições, rentabilidade, benchmarks, distribuição | | |
 | análise por IA e chat | | |
 | rankings dos ativos da watchlist (altas, baixas, volume relativo, sinais) | | rankings de mercado (a API não tem a rota) |
+
+As notícias do Dashboard não vêm da API (ela não tem rota de notícias): são manchetes reais do Google News
+sobre os tickers da watchlist, buscadas em `/noticias/rss`. Esse caminho é repassado ao RSS do Google News pelo
+Nginx do container (com cache de 10 min) e, em dev, pelo proxy do Vite.
 
 A API só dá um `ativo_id` a um ativo depois que ele entra na watchlist. Por isso, na tela de um ativo fora da
 watchlist, cotação, histórico, indicadores e sinais são ilustrativos, e a tela avisa. Se a cotação real falhar

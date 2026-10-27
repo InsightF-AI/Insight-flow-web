@@ -247,8 +247,8 @@ export default function SettingsPanel() {
         <p>
           Cliente web em React + Vite integrado à API do InsightFlow: watchlist, cotações, histórico, indicadores,
           sinais, alertas, carteira simulada, notificações e IA vêm do servidor; os rankings são montados com os
-          ativos da sua watchlist. Rankings de mercado, notícias e o score de oportunidade ficam de fora até a API
-          ter essas rotas. Nenhuma ordem real é enviada a corretora.
+          ativos da sua watchlist e as notícias vêm do Google News. Rankings de mercado e o score de oportunidade
+          ficam de fora até a API ter essas rotas. Nenhuma ordem real é enviada a corretora.
         </p>
       </Card>
     </div>
