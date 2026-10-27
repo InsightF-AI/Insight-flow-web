@@ -168,3 +168,32 @@ describe('api.getRankings', () => {
     expect(r.sinais.map((a) => [a.ticker, a.sinais])).toEqual([['ITUB4', 2], ['VALE3', 1]]);
   });
 });
+
+describe('api.getNews', () => {
+  const rss = `<?xml version="1.0"?><rss><channel>
+    <item><title>Petrobras (PETR4) sobe após balanço - InfoMoney</title><link>https://news.google.com/a</link>
+      <guid>a</guid><pubDate>Mon, 26 Oct 2026 12:00:00 GMT</pubDate><source url="https://infomoney.com.br">InfoMoney</source></item>
+    <item><title>Vale anuncia dividendos - Valor</title><link>https://news.google.com/b</link>
+      <guid>b</guid><pubDate>Mon, 26 Oct 2026 15:00:00 GMT</pubDate><source url="https://valor.com.br">Valor</source></item>
+  </channel></rss>`;
+
+  it('busca os tickers da watchlist no Google News e devolve as manchetes mais recentes primeiro', async () => {
+    fetch.mockResolvedValue({ ok: true, status: 200, text: async () => rss });
+
+    const noticias = await api.getNews(['PETR4', 'VALE3']);
+
+    const url = new URL(fetch.mock.calls[0][0], 'http://localhost');
+    expect(url.pathname).toBe('/noticias/rss');
+    expect(url.searchParams.get('q')).toBe('"PETR4" OR "VALE3" when:7d');
+    expect(noticias).toEqual([
+      { id: 'b', titulo: 'Vale anuncia dividendos', link: 'https://news.google.com/b', fonte: 'Valor', data: '2026-10-26T15:00:00.000Z', ticker: null },
+      { id: 'a', titulo: 'Petrobras (PETR4) sobe após balanço', link: 'https://news.google.com/a', fonte: 'InfoMoney', data: '2026-10-26T12:00:00.000Z', ticker: 'PETR4' },
+    ]);
+  });
+
+  it('falha em vez de inventar manchetes quando o feed não responde', async () => {
+    fetch.mockResolvedValue({ ok: false, status: 502, text: async () => '' });
+
+    await expect(api.getNews(['PETR4'])).rejects.toThrow('Não foi possível carregar as notícias.');
+  });
+});

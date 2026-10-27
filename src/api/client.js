@@ -1,7 +1,7 @@
 /**
  * Camada de acesso a dados — ponto único de integração com o backend FastAPI (`/api/v1`,
- * via proxy do Vite). O que a API expõe vem dela; o que ela ainda não expõe (notícias,
- * rankings de mercado, score) fica fora da tela até o backend ter a rota.
+ * via proxy do Vite). O que a API expõe vem dela; o que ela ainda não expõe (rankings de
+ * mercado, score) fica fora da tela até o backend ter a rota. Notícias vêm do Google News.
  */
 import { DISCLAIMER } from './mock/ai.js';
 import { computeIndicators } from '../lib/indicators.js';
@@ -420,6 +420,43 @@ export const api = {
     });
     entry.notificar = data.notificar;
     return { ok: true };
+  },
+  /** Manchetes reais do Google News sobre os ativos da watchlist (últimos 7 dias). A API não tem
+   * rota de notícias e o Google não libera CORS: o RSS vem por /noticias/rss, que o Nginx do
+   * container (e o Vite em dev) repassa ao Google News. */
+  async getNews(tickers, limit = 6) {
+    if (!tickers?.length) return [];
+    if (import.meta.env.DEV && useUiStore.getState().forcarErro) {
+      throw new Error('Falha ao carregar os dados. Verifique sua conexão e tente novamente.');
+    }
+    const params = new URLSearchParams({
+      q: `${tickers.map((t) => `"${t}"`).join(' OR ')} when:7d`,
+      hl: 'pt-BR',
+      gl: 'BR',
+      ceid: 'BR:pt-419',
+    });
+    const res = await fetch(`/noticias/rss?${params}`, { signal: AbortSignal.timeout(15_000) }).catch(() => null);
+    if (!res?.ok) throw new Error('Não foi possível carregar as notícias.');
+    const xml = new DOMParser().parseFromString(await res.text(), 'text/xml');
+    if (xml.querySelector('parsererror')) throw new Error('Não foi possível carregar as notícias.');
+    return [...xml.querySelectorAll('item')]
+      .map((item) => {
+        const texto = (tag) => item.querySelector(tag)?.textContent.trim() ?? '';
+        const fonte = texto('source');
+        // o título do Google News termina em " - Veículo"; o veículo já aparece à parte no card.
+        const titulo = fonte && texto('title').endsWith(` - ${fonte}`) ? texto('title').slice(0, -(fonte.length + 3)) : texto('title');
+        const data = new Date(texto('pubDate'));
+        return {
+          id: texto('guid') || texto('link'),
+          titulo,
+          link: texto('link'),
+          fonte,
+          data: Number.isNaN(data.getTime()) ? null : data.toISOString(),
+          ticker: tickers.find((t) => titulo.toUpperCase().includes(t)) ?? null,
+        };
+      })
+      .sort((a, b) => (b.data ?? '').localeCompare(a.data ?? ''))
+      .slice(0, limit);
   },
   /** Rankings (RF-05 a RF-08) dos ativos da watchlist — a API não tem rota de ranking de mercado,
    * então ordena o que ela já devolve por ativo: cotação, sinais ativos e volume relativo. */
