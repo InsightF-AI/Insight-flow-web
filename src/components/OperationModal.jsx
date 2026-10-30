@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, Check, ChevronDown, X } from 'lucide-react';
-import { usePositions, useCreateOperation, useWatchlist } from '../hooks/queries.js';
+import { useCatalogo, useCotacaoAtual, usePositions, useCreateOperation, useWatchlist } from '../hooks/queries.js';
 import { fmtBRL, fmtNum } from '../lib/format.js';
 
 const hoje = () => new Date().toISOString().slice(0, 10);
@@ -16,8 +16,8 @@ const vazio = (ticker, catalogo) => {
   };
 };
 
-/** Combobox de busca sobre os ativos da watchlist — é de lá que vem o ativo_id que a API de
- * operações exige (o preço atual entra como sugestão de preço unitário). */
+/** Combobox de busca sobre o catálogo de ativos e a watchlist — é de lá que vem o ativo_id que a
+ * API de operações exige (o preço atual entra como sugestão de preço unitário). */
 function AtivoCombobox({ ticker, onSelect, catalogo }) {
   const asset = catalogo.find((a) => a.ticker === ticker);
   const [busca, setBusca] = useState(asset ? rotulo(asset) : '');
@@ -62,7 +62,7 @@ function AtivoCombobox({ ticker, onSelect, catalogo }) {
       {aberto && (
         <ul className="absolute z-10 mt-1 max-h-56 w-full overflow-y-auto rounded-sm border border-border-main bg-surface py-1 shadow-lg">
           {opcoes.length === 0 ? (
-            <li className="px-3 py-2 text-xs text-fg-3">Nenhum ativo encontrado. Adicione-o à watchlist pela busca.</li>
+            <li className="px-3 py-2 text-xs text-fg-3">Nenhum ativo encontrado.</li>
           ) : (
             opcoes.map((a) => (
               <li key={a.ticker}>
@@ -90,15 +90,20 @@ function AtivoCombobox({ ticker, onSelect, catalogo }) {
  * quando aberto a partir da tela de detalhe (atalho "Nova operação"). */
 export default function OperationModal({ open, onClose, initialTicker }) {
   const { data: watchlist } = useWatchlist();
+  const { data: catalogoApi } = useCatalogo();
   const catalogo = useMemo(() => {
     const itens = (watchlist ?? []).map((w) => ({ ticker: w.ticker, nome: w.nome, tipo: w.tipo, base: w.cotacao?.preco }));
+    const naWatchlist = new Set(itens.map((a) => a.ticker));
+    for (const a of catalogoApi ?? []) {
+      if (!naWatchlist.has(a.ticker)) itens.push({ id: a.id, ticker: a.ticker, nome: a.nome, tipo: a.tipo });
+    }
     // aberto pela tela de um ativo fora da watchlist: ele entra na watchlist ao registrar a operação.
     if (initialTicker && !itens.some((a) => a.ticker === initialTicker)) {
       itens.unshift({ ticker: initialTicker, nome: 'será adicionado à watchlist', tipo: 'ACAO' });
     }
     return itens;
-  }, [watchlist, initialTicker]);
-  const catalogoCarregado = watchlist != null;
+  }, [watchlist, catalogoApi, initialTicker]);
+  const catalogoCarregado = catalogo.length > 0;
   const [form, setForm] = useState(() => vazio(initialTicker, catalogo));
   const [erros, setErros] = useState({});
   const [ok, setOk] = useState(false);
@@ -110,6 +115,9 @@ export default function OperationModal({ open, onClose, initialTicker }) {
   };
   const total = (Number(form.quantidade) || 0) * (Number(form.preco_unitario) || 0);
   const asset = catalogo.find((a) => a.ticker === form.ticker);
+  const { data: cotacaoSelecionada, isFetching: buscandoCotacao } = useCotacaoAtual(
+    open && asset?.id && asset.base == null ? asset.id : null,
+  );
   const posicao = (positions ?? []).find((p) => p.ticker === form.ticker);
   const disponivel = posicao?.quantidade ?? 0;
 
@@ -122,11 +130,18 @@ export default function OperationModal({ open, onClose, initialTicker }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, initialTicker, catalogoCarregado]);
 
+  useEffect(() => {
+    if (cotacaoSelecionada != null && form.preco_unitario === '') {
+      setForm((f) => (f.ticker === asset?.ticker && f.preco_unitario === '' ? { ...f, preco_unitario: String(cotacaoSelecionada) } : f));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cotacaoSelecionada, form.ticker]);
+
   if (!open) return null;
 
   const selecionarAtivo = (ticker) => {
     const a = catalogo.find((x) => x.ticker === ticker);
-    setForm({ ...form, ticker, preco_unitario: String(a?.base ?? form.preco_unitario) });
+    setForm({ ...form, ticker, preco_unitario: a?.base != null ? String(a.base) : '' });
     setErros({ ...erros, ticker: undefined, preco_unitario: undefined });
   };
 
@@ -134,7 +149,7 @@ export default function OperationModal({ open, onClose, initialTicker }) {
     const e = {};
     const qtd = Number(form.quantidade);
     const preco = Number(form.preco_unitario);
-    if (!form.ticker) e.ticker = 'Selecione um ativo da watchlist.';
+    if (!form.ticker) e.ticker = 'Selecione um ativo.';
     if (!form.quantidade || qtd <= 0) e.quantidade = 'Informe uma quantidade maior que zero.';
     else if (form.tipo === 'VENDA' && qtd > disponivel) {
       e.quantidade = `Você tem ${fmtNum(disponivel, asset?.tipo === 'CRIPTO' ? 4 : 0)} em carteira.`;
@@ -248,6 +263,7 @@ export default function OperationModal({ open, onClose, initialTicker }) {
                   onChange={set('preco_unitario')}
                 />
                 {erros.preco_unitario && <p className="mt-1.5 text-xs text-down">{erros.preco_unitario}</p>}
+                {buscandoCotacao && !erros.preco_unitario && <p className="mt-1.5 text-xs text-fg-3">Buscando cotação atual…</p>}
               </div>
             </div>
 

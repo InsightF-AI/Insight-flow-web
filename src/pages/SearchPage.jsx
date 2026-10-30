@@ -88,12 +88,12 @@ export default function SearchPage() {
               </button>
             }
           >
-            Nenhum ativo corresponde à busca.
+            {termo.trim() ? 'Nenhum ativo corresponde à busca.' : 'Nenhum ativo disponível.'}
           </Empty>
         ) : (
           <ul>
             {lista.map((a) => (
-              <li key={a.id} className="flex items-center gap-3 border-b border-border-soft px-4 py-3 last:border-0 hover:bg-elevated">
+              <li key={a.ticker} className="flex items-center gap-3 border-b border-border-soft px-4 py-3 last:border-0 hover:bg-elevated">
                 <Link to={`/ativo/${a.ticker}`} className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <span className="num text-sm font-bold text-fg-0">{a.ticker}</span>

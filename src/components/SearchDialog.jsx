@@ -49,7 +49,7 @@ export default function SearchDialog() {
         </div>
         <ul className="max-h-80 overflow-y-auto py-1">
           {(data ?? []).map((a) => (
-            <li key={a.id}>
+            <li key={a.ticker}>
               <button onClick={() => go(a.ticker)} className="flex w-full items-center gap-3 px-4 py-2.5 text-left hover:bg-elevated">
                 <span className="num w-16 text-sm font-bold text-fg-0">{a.ticker}</span>
                 <span className="min-w-0 flex-1 truncate text-sm text-fg-2">{a.nome}</span>
@@ -58,7 +58,7 @@ export default function SearchDialog() {
             </li>
           ))}
           {!isFetching && (data ?? []).length === 0 && (
-            <li className="px-4 py-6 text-center text-sm text-fg-3">Nenhum ativo encontrado para “{termo}”.</li>
+            <li className="px-4 py-6 text-center text-sm text-fg-3">{termo.trim() ? <>Nenhum ativo encontrado para “{termo}”.</> : 'Nenhum ativo disponível.'}</li>
           )}
         </ul>
       </div>
