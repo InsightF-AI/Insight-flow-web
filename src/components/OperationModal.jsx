@@ -106,11 +106,13 @@ export default function OperationModal({ open, onClose, initialTicker }) {
   const catalogoCarregado = catalogo.length > 0;
   const [form, setForm] = useState(() => vazio(initialTicker, catalogo));
   const [erros, setErros] = useState({});
+  const [aguardandoPreco, setAguardandoPreco] = useState(true);
   const [ok, setOk] = useState(false);
   const { data: positions } = usePositions();
   const mut = useCreateOperation();
   const set = (k) => (e) => {
     setForm({ ...form, [k]: e.target.value });
+    if (k === 'preco_unitario') setAguardandoPreco(false);
     if (erros[k]) setErros({ ...erros, [k]: undefined });
   };
   const total = (Number(form.quantidade) || 0) * (Number(form.preco_unitario) || 0);
@@ -124,6 +126,7 @@ export default function OperationModal({ open, onClose, initialTicker }) {
   useEffect(() => {
     if (open) {
       setForm(vazio(initialTicker, catalogo));
+      setAguardandoPreco(true);
       setErros({});
       mut.reset();
     }
@@ -131,17 +134,19 @@ export default function OperationModal({ open, onClose, initialTicker }) {
   }, [open, initialTicker, catalogoCarregado]);
 
   useEffect(() => {
-    if (cotacaoSelecionada != null && form.preco_unitario === '') {
-      setForm((f) => (f.ticker === asset?.ticker && f.preco_unitario === '' ? { ...f, preco_unitario: String(cotacaoSelecionada) } : f));
+    if (aguardandoPreco && cotacaoSelecionada != null) {
+      setForm((f) => (f.ticker === asset?.ticker ? { ...f, preco_unitario: String(cotacaoSelecionada) } : f));
+      setAguardandoPreco(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cotacaoSelecionada, form.ticker]);
+  }, [aguardandoPreco, cotacaoSelecionada, form.ticker]);
 
   if (!open) return null;
 
   const selecionarAtivo = (ticker) => {
     const a = catalogo.find((x) => x.ticker === ticker);
     setForm({ ...form, ticker, preco_unitario: a?.base != null ? String(a.base) : '' });
+    setAguardandoPreco(a?.base == null);
     setErros({ ...erros, ticker: undefined, preco_unitario: undefined });
   };
 
