@@ -197,3 +197,58 @@ describe('api.getNews', () => {
     await expect(api.getNews(['PETR4'])).rejects.toThrow('Não foi possível carregar as notícias.');
   });
 });
+
+describe('catálogo de ativos', () => {
+  const CATALOGO = [
+    { id: 'id-btc', ticker: 'BTC', nome: 'Bitcoin', tipo: 'CRIPTO', setor: null, moeda: 'BRL' },
+    { id: 'id-petr4', ticker: 'PETR4', nome: 'PETROBRAS', tipo: 'ACAO', setor: 'Energy', moeda: 'BRL' },
+  ];
+
+  function rotear(rotas) {
+    fetch.mockImplementation(async (caminho) => {
+      const rota = Object.keys(rotas).find((r) => caminho.startsWith(`/api/v1${r}`));
+      if (!rota) return respostaDoFetch({ detail: 'nao encontrado' }, 404);
+      const [corpo, status] = rotas[rota];
+      return respostaDoFetch(corpo, status);
+    });
+  }
+
+  it('sem termo, a busca devolve o catálogo inteiro sem consultar a fonte externa', async () => {
+    rotear({ '/ativos/catalogo': [CATALOGO] });
+
+    const lista = await api.searchAssets('');
+
+    expect(lista.map((a) => a.ticker)).toEqual(['BTC', 'PETR4']);
+    expect(fetch.mock.calls.some(([c]) => c.includes('/ativos/buscar'))).toBe(false);
+  });
+
+  it('com termo, junta o catálogo à busca externa sem repetir ticker', async () => {
+    rotear({
+      '/ativos/catalogo': [CATALOGO],
+      '/ativos/buscar': [[{ ticker: 'PETR4', nome: 'PETROBRAS' }, { ticker: 'PETR3', nome: 'PETROBRAS ON' }]],
+    });
+
+    const lista = await api.searchAssets('petr');
+
+    expect(lista.map((a) => a.ticker)).toEqual(['PETR4', 'PETR3']);
+    expect(lista[0].id).toBe('id-petr4');
+  });
+
+  it('com a fonte externa fora do ar, ainda devolve o que o catálogo tem', async () => {
+    rotear({ '/ativos/catalogo': [CATALOGO], '/ativos/buscar': [{ detail: 'indisponivel' }, 503] });
+
+    const lista = await api.searchAssets('bitc');
+
+    expect(lista.map((a) => a.ticker)).toEqual(['BTC']);
+  });
+
+  it('registra operação de ativo do catálogo sem passar pela watchlist', async () => {
+    rotear({ '/watchlist': [[]], '/ativos/catalogo': [CATALOGO], '/operacoes': [{ id: 'op-1' }, 201] });
+
+    await api.createOperation({ ticker: 'BTC', tipo: 'COMPRA', quantidade: 0.5, preco_unitario: 300000, data: '2026-10-30' });
+
+    const post = fetch.mock.calls.find(([c]) => c === '/api/v1/operacoes');
+    expect(JSON.parse(post[1].body).ativo_id).toBe('id-btc');
+    expect(fetch.mock.calls.some(([c, o]) => c === '/api/v1/watchlist' && o?.method === 'POST')).toBe(false);
+  });
+});

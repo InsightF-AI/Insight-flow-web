@@ -114,6 +114,8 @@ function simularIaIndisponivel() {
 // cotação/histórico/indicadores/sinais só existem para ativos que já estão na watchlist —
 // os demais (ex: resultado de busca ainda não adicionado) ficam sem esses dados até entrarem nela.
 let watchlistIndex = new Map();
+// ticker -> {id, nome, tipo, setor, moeda} do catálogo global de ativos (GET /ativos/catalogo).
+let catalogoIndex = new Map();
 // alerta_id -> último AlertaResponse visto em getUserRules() (pra saber o estado ao alternar).
 let alertasIndex = new Map();
 // sinal_id -> notificação SINAL_ATIVADO correspondente (pra marcar como lida no backend).
@@ -157,6 +159,17 @@ async function carregarWatchlistIndex() {
     ]),
   );
   return items;
+}
+
+async function carregarCatalogoIndex() {
+  const items = await apiFetch('/ativos/catalogo');
+  catalogoIndex = new Map(items.map((it) => [it.ticker, it]));
+  return items;
+}
+
+async function resolverAtivoCatalogo(ticker) {
+  if (!catalogoIndex.has(ticker)) await carregarCatalogoIndex().catch(() => []);
+  return catalogoIndex.get(ticker);
 }
 
 /** Sinais reais de um ativo (GET /ativos/{id}/sinais), cada um com seu backtest. */
@@ -279,14 +292,31 @@ export const api = {
     await apiFetch('/auth/logout', { method: 'POST', body: JSON.stringify({ refresh_token: refreshToken }) }).catch(() => {});
   },
   /* ----- ativos (RF-04, RF-05, RF-06) ----- */
+  async getCatalogo() {
+    return carregarCatalogoIndex();
+  },
+  async getCotacaoAtual(ativoId) {
+    const cot = await apiFetch(`/ativos/${ativoId}/cotacao`);
+    return Number(cot.preco);
+  },
   async searchAssets(termo) {
     const t = (termo || '').trim();
-    // a API não tem um endpoint de "listar todos" — sem termo, não tem o que buscar de verdade.
-    if (!t) return [];
-    // a busca real não devolve preço (só a cotação por ativo_id tem isso, e resultado de busca
-    // ainda não tem um ativo_id — só ganha um ao ser adicionado à watchlist). SearchPage.jsx
-    // mostra "—" na coluna de preço pra esses itens até lá.
-    return apiFetch(`/ativos/buscar?termo=${encodeURIComponent(t)}`);
+    const catalogo = await carregarCatalogoIndex().catch(() => []);
+    if (!t) return catalogo;
+    const termoMin = t.toLowerCase();
+    const locais = catalogo.filter(
+      (a) => a.ticker.toLowerCase().includes(termoMin) || a.nome.toLowerCase().includes(termoMin),
+    );
+    // a busca externa não devolve preço nem ativo_id; SearchPage.jsx mostra "—" na coluna de preço.
+    let externos;
+    try {
+      externos = await apiFetch(`/ativos/buscar?termo=${encodeURIComponent(t)}`);
+    } catch (err) {
+      if (locais.length > 0) return locais;
+      throw err;
+    }
+    const vistos = new Set(locais.map((a) => a.ticker));
+    return [...locais, ...externos.filter((a) => !vistos.has(a.ticker))];
   },
   async getAsset(ticker) {
     const cached = await resolverAtivoCache(ticker);
@@ -496,9 +526,11 @@ export const api = {
       apiFetch('/operacoes'),
       apiFetch('/portfolio/posicoes').catch(() => []),
       carregarWatchlistIndex().catch(() => []),
+      carregarCatalogoIndex().catch(() => []),
     ]);
-    // a operação só traz ativo_id — o ticker vem da watchlist ou das posições.
+    // a operação só traz ativo_id — o ticker vem do catálogo, da watchlist ou das posições.
     const tickerPorId = new Map([
+      ...[...catalogoIndex.values()].map((a) => [a.id, a.ticker]),
       ...posicoes.map((p) => [p.ativo_id, p.ticker]),
       ...[...watchlistIndex.entries()].map(([t, info]) => [info.id, t]),
     ]);
@@ -516,9 +548,9 @@ export const api = {
       .sort((a, b) => b.data.localeCompare(a.data));
   },
   async createOperation(op) {
-    let cached = await resolverAtivoCache(op.ticker);
+    let cached = (await resolverAtivoCache(op.ticker)) ?? (await resolverAtivoCatalogo(op.ticker));
     if (!cached) {
-      // a API só cria o ativo (e lhe dá um ativo_id) quando ele entra na watchlist.
+      // fora do catálogo, a API só cria o ativo (e lhe dá um ativo_id) quando ele entra na watchlist.
       await apiFetch('/watchlist', { method: 'POST', body: JSON.stringify({ ticker: op.ticker }) });
       await carregarWatchlistIndex();
       cached = watchlistIndex.get(op.ticker);

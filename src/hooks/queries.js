@@ -16,6 +16,15 @@ export const useSignals = (params, habilitado = true) =>
 export const useNews = (tickers) =>
   useQuery({ queryKey: ['news', tickers], queryFn: () => api.getNews(tickers), enabled: tickers.length > 0, staleTime: 10 * 60_000 });
 export const useRankings =() => useQuery({ queryKey: ['rankings'], queryFn: () => api.getRankings() });
+export const useCatalogo = () =>
+  useQuery({ queryKey: ['catalogo'], queryFn: () => api.getCatalogo(), staleTime: 10 * 60_000 });
+export const useCotacaoAtual = (ativoId) =>
+  useQuery({
+    queryKey: ['cotacaoAtual', ativoId],
+    queryFn: () => api.getCotacaoAtual(ativoId),
+    enabled: !!ativoId,
+    retry: false,
+  });
 export const useSearch =(termo) => useQuery({ queryKey: ['search', termo], queryFn: () => api.searchAssets(termo) });
 export const useOperations = () => useQuery({ queryKey: ['operations'], queryFn: () => api.getOperations() });
 export const usePositions = () => useQuery({ queryKey: ['positions'], queryFn: () => api.getPositions() });
